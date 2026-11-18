@@ -51,7 +51,7 @@ struct AlbumsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            Group {
                 if albums.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "square.stack.fill")
@@ -59,57 +59,64 @@ struct AlbumsView: View {
                             .foregroundStyle(effectiveAccent)
                         Text("Sin álbumes aún")
                             .font(.headline)
+                            .foregroundStyle(.white)
                         Text("Importa tus canciones desde Biblioteca o Ajustes.")
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
                     }
-                    .padding(.top, 120)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AppTheme.background)
                 } else {
-                    LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(albums) { album in
-                            NavigationLink(destination: AlbumDetailView(album: album)) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Group {
-                                        if let img = album.coverImage {
-                                            Image(uiImage: img)
-                                                .resizable()
-                                                .scaledToFill()
-                                        } else {
-                                            ZStack {
-                                                AppTheme.cardBackground
-                                                Image(systemName: "opticaldisc")
-                                                    .font(.system(size: 42))
-                                                    .foregroundStyle(effectiveAccent)
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 18) {
+                            ForEach(albums) { album in
+                                NavigationLink(destination: AlbumDetailView(album: album)) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Group {
+                                            if let img = album.coverImage {
+                                                Image(uiImage: img)
+                                                    .resizable()
+                                                    .scaledToFill()
+                                            } else {
+                                                ZStack {
+                                                    AppTheme.cardBackground
+                                                    Image(systemName: "opticaldisc")
+                                                        .font(.system(size: 42))
+                                                        .foregroundStyle(effectiveAccent)
+                                                }
                                             }
                                         }
-                                    }
-                                    .frame(height: 165)
-                                    .frame(maxWidth: .infinity)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                                        .frame(height: 165)
+                                        .frame(maxWidth: .infinity)
+                                        .clipShape(RoundedRectangle(cornerRadius: 16))
 
-                                    Text(album.title)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                        .lineLimit(1)
+                                        Text(album.title)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.white)
+                                            .lineLimit(1)
 
-                                    HStack(spacing: 4) {
-                                        Text(album.albumArtist)
-                                        if let year = album.year {
-                                            Text("· \(year)")
+                                        HStack(spacing: 4) {
+                                            Text(album.albumArtist)
+                                            if let year = album.year {
+                                                Text("· \(year)")
+                                            }
                                         }
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                        .lineLimit(1)
                                     }
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.secondaryText)
-                                    .lineLimit(1)
                                 }
                             }
                         }
+                        .padding()
+                        .padding(.bottom, 90)
                     }
-                    .padding()
-                    .padding(.bottom, 90)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AppTheme.background)
                 }
             }
-            .background(AppTheme.background)
             .navigationTitle("Álbumes")
         }
     }
