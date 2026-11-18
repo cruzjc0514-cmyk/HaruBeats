@@ -3,10 +3,11 @@ import SwiftUI
 struct NowPlayingView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
     @State private var dragProgress: Double? = nil
+    @State private var showLyrics: Bool = false
 
     var body: some View {
         ZStack {
-            // 1. Fondo ambiental contenido dentro de los límites de pantalla
+            // Fondo ambiental
             GeometryReader { geo in
                 if let song = audioManager.currentSong, let uiImage = song.artworkImage {
                     Image(uiImage: uiImage)
@@ -14,7 +15,7 @@ struct NowPlayingView: View {
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .blur(radius: 65)
-                        .overlay(Color.black.opacity(0.55))
+                        .overlay(Color.black.opacity(showLyrics ? 0.72 : 0.55))
                         .clipped()
                 } else {
                     LinearGradient(
@@ -26,51 +27,103 @@ struct NowPlayingView: View {
             }
             .ignoresSafeArea()
 
-            // 2. Contenido principal bien proporcionado
             if let song = audioManager.currentSong {
-                VStack(spacing: 24) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.35))
-                        .frame(width: 40, height: 5)
-                        .padding(.top, 12)
+                VStack(spacing: 18) {
+                    // Indicador superior y botón de letras
+                    HStack {
+                        Spacer()
+                        Capsule()
+                            .fill(Color.white.opacity(0.35))
+                            .frame(width: 40, height: 5)
+                        Spacer()
+                    }
+                    .overlay(alignment: .trailing) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                showLyrics.toggle()
+                            }
+                        } label: {
+                            Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
+                                .font(.title3)
+                                .foregroundStyle(showLyrics ? .white : .white.opacity(0.75))
+                                .padding(8)
+                                .background(showLyrics ? Color.white.opacity(0.22) : Color.clear)
+                                .clipShape(Circle())
+                        }
+                        .padding(.trailing, 24)
+                    }
+                    .padding(.top, 12)
 
-                    Spacer()
+                    if showLyrics {
+                        // Vista compacta arriba + Letras sincronizadas
+                        HStack(spacing: 12) {
+                            Group {
+                                if let uiImage = song.artworkImage {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                } else {
+                                    AppTheme.cardBackground
+                                }
+                            }
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                    // Portada grande
-                    Group {
-                        if let uiImage = song.artworkImage {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .scaledToFill()
-                        } else {
-                            ZStack {
-                                AppTheme.cardBackground
-                                Image(systemName: "waveform")
-                                    .font(.system(size: 72))
-                                    .foregroundStyle(.indigo)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(song.title)
+                                    .font(.headline)
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Text(song.artist)
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.secondaryText)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 28)
+
+                        LyricsView()
+                            .frame(maxHeight: .infinity)
+                    } else {
+                        Spacer()
+
+                        Group {
+                            if let uiImage = song.artworkImage {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                            } else {
+                                ZStack {
+                                    AppTheme.cardBackground
+                                    Image(systemName: "waveform")
+                                        .font(.system(size: 72))
+                                        .foregroundStyle(.indigo)
+                                }
                             }
                         }
+                        .frame(width: 295, height: 295)
+                        .clipShape(RoundedRectangle(cornerRadius: 24))
+                        .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+
+                        VStack(spacing: 6) {
+                            Text(song.title)
+                                .font(.title2.bold())
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+
+                            Text("\(song.artist) · \(song.album)")
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 24)
+
+                        Spacer()
                     }
-                    .frame(width: 295, height: 295)
-                    .clipShape(RoundedRectangle(cornerRadius: 24))
-                    .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
 
-                    // Título, artista y álbum
-                    VStack(spacing: 6) {
-                        Text(song.title)
-                            .font(.title2.bold())
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-
-                        Text("\(song.artist) · \(song.album)")
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.secondaryText)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 24)
-
-                    // Barra de progreso personalizada (sin saltos y siempre visible)
+                    // Barra de progreso táctil
                     VStack(spacing: 8) {
                         let safeDuration = max(audioManager.duration, 1)
                         let currentRatio = dragProgress ?? min(max(audioManager.currentTime / safeDuration, 0), 1)
@@ -159,8 +212,7 @@ struct NowPlayingView: View {
                                 .foregroundStyle(audioManager.isRepeatOne ? .indigo : .white.opacity(0.7))
                         }
                     }
-
-                    Spacer()
+                    .padding(.bottom, 18)
                 }
             }
         }

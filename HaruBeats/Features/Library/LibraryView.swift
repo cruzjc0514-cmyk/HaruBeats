@@ -70,7 +70,7 @@ struct LibraryView: View {
             }
             .fileImporter(
                 isPresented: $showImporter,
-                allowedContentTypes: [.audio],
+                allowedContentTypes: [.audio, .plainText, UTType(filenameExtension: "lrc") ?? .data],
                 allowsMultipleSelection: true
             ) { result in
                 if case .success(let urls) = result {

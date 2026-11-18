@@ -7,6 +7,7 @@ import Combine
 final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var library: [Song] = []
     @Published var currentSong: Song?
+    @Published var currentLyrics: [LyricLine] = []
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
@@ -141,6 +142,41 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             }
         }
         await loadStoredLibrary()
+        if let currentSong {
+            loadLyrics(for: currentSong)
+        }
+    }
+
+    func loadLyrics(for song: Song) {
+        let baseName = song.fileURL.deletingPathExtension().lastPathComponent
+        let lrcURL = musicDirectory.appendingPathComponent("\(baseName).lrc")
+
+        if FileManager.default.fileExists(atPath: lrcURL.path),
+           let content = try? String(contentsOf: lrcURL, encoding: .utf8) {
+            currentLyrics = LRCParser.parse(content: content)
+        } else {
+            currentLyrics = []
+        }
+    }
+
+    func attachManualLRC(from sourceURL: URL) {
+        guard let song = currentSong else { return }
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+        }
+
+        let baseName = song.fileURL.deletingPathExtension().lastPathComponent
+        let destination = musicDirectory.appendingPathComponent("\(baseName).lrc")
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            loadLyrics(for: song)
+        } catch {
+            print("Error vinculando .lrc manual: \(error)")
+        }
     }
 
     func play(song: Song) {
@@ -156,6 +192,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             duration = player?.duration ?? song.duration
             currentTime = 0
             isPlaying = true
+            loadLyrics(for: song)
             updateNowPlayingInfo()
             startTimer()
         } catch {
@@ -225,7 +262,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     private func startTimer() {
         stopTimer()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let player = self.player, !self.isScrubbing else { return }
                 self.currentTime = player.currentTime
