@@ -5,7 +5,7 @@ struct MiniPlayerView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
     @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
     @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
-    @Binding var showNowPlaying: Bool
+    @Binding var showFullPlayer: Bool
     @State private var dragOffset: CGSize = .zero
 
     private var effectiveAccent: Color {
@@ -100,7 +100,7 @@ struct MiniPlayerView: View {
             .accessibilityHint("Toca o desliza hacia arriba para abrir el reproductor. Desliza a izquierda o derecha para cambiar de canción.")
             .onTapGesture {
                 triggerHaptic(.soft)
-                showNowPlaying = true
+                showFullPlayer = true
             }
             .gesture(
                 DragGesture(minimumDistance: 18)
@@ -115,7 +115,7 @@ struct MiniPlayerView: View {
                         }
                         if dy < -35 && abs(dy) > abs(dx) {
                             triggerHaptic(.medium)
-                            showNowPlaying = true
+                            showFullPlayer = true
                         } else if dx < -55 && abs(dx) > abs(dy) {
                             triggerHaptic(.light)
                             audioManager.playNext()

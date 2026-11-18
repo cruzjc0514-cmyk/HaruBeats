@@ -77,12 +77,12 @@ final class WiFiTransferServer: ObservableObject {
         statusLog = "Servidor detenido"
     }
 
-    private func handleConnection(_ connection: NWConnection) {
+    nonisolated private func handleConnection(_ connection: NWConnection) {
         connection.start(queue: serverQueue)
         receiveFullHTTPRequest(on: connection, buffer: Data())
     }
 
-    private func receiveFullHTTPRequest(on connection: NWConnection, buffer: Data) {
+    nonisolated private func receiveFullHTTPRequest(on connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 262_144) { [weak self] data, _, isComplete, error in
             guard let self else {
                 connection.cancel()
@@ -126,7 +126,7 @@ final class WiFiTransferServer: ObservableObject {
         }
     }
 
-    private func extractContentLength(from headers: String) -> Int {
+    nonisolated private func extractContentLength(from headers: String) -> Int {
         for line in headers.components(separatedBy: "\r\n") {
             if line.lowercased().hasPrefix("content-length:") {
                 let val = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
@@ -136,7 +136,7 @@ final class WiFiTransferServer: ObservableObject {
         return 0
     }
 
-    private func extractHeaderValue(named name: String, from headers: String) -> String? {
+    nonisolated private func extractHeaderValue(named name: String, from headers: String) -> String? {
         let lowerPrefix = name.lowercased() + ":"
         for line in headers.components(separatedBy: "\r\n") {
             if line.lowercased().hasPrefix(lowerPrefix) {
@@ -146,7 +146,7 @@ final class WiFiTransferServer: ObservableObject {
         return nil
     }
 
-    private func extractBoundary(from headers: String) -> String {
+    nonisolated private func extractBoundary(from headers: String) -> String {
         for line in headers.components(separatedBy: "\r\n") {
             if line.lowercased().hasPrefix("content-type:"),
                let range = line.range(of: "boundary=") {
@@ -156,7 +156,7 @@ final class WiFiTransferServer: ObservableObject {
         return ""
     }
 
-    private func processMultipartUpload(body: Data, boundary: String, providedPin: String?, connection: NWConnection) {
+    nonisolated private func processMultipartUpload(body: Data, boundary: String, providedPin: String?, connection: NWConnection) {
         Task { @MainActor in
             if self.isPinEnabled && !self.pinCode.isEmpty && providedPin != self.pinCode {
                 self.sendJSONResponse(on: connection, status: "403 Forbidden", json: "{\"ok\":false,\"error\":\"PIN incorrecto\"}")
@@ -170,6 +170,7 @@ final class WiFiTransferServer: ObservableObject {
 
             let boundaryData = Data("--\(boundary)".utf8)
             let headerSeparator = Data("\r\n\r\n".utf8)
+            let crlf = Data("\r\n".utf8)
             var savedInBatch = 0
 
             var searchIndex = body.startIndex
@@ -178,10 +179,10 @@ final class WiFiTransferServer: ObservableObject {
                 guard let nextBoundaryRange = body.range(of: boundaryData, in: partStart..<body.endIndex) else { break }
 
                 var partData = body.subdata(in: partStart..<nextBoundaryRange.lowerBound)
-                if partData.hasPrefix(Data("\r\n".utf8)) {
+                if partData.starts(with: crlf) {
                     partData.removeFirst(2)
                 }
-                if partData.hasSuffix(Data("\r\n".utf8)) {
+                if partData.count >= 2 && partData.suffix(2) == crlf {
                     partData.removeLast(2)
                 }
 
@@ -209,14 +210,14 @@ final class WiFiTransferServer: ObservableObject {
         }
     }
 
-    private func extractFilename(from partHeaders: String) -> String? {
+    nonisolated private func extractFilename(from partHeaders: String) -> String? {
         guard let range = partHeaders.range(of: "filename=\"") else { return nil }
         let rest = partHeaders[range.upperBound...]
         guard let endQuote = rest.firstIndex(of: "\"") else { return nil }
         return String(rest[..<endQuote])
     }
 
-    private func sendHTMLResponse(on connection: NWConnection) {
+    nonisolated private func sendHTMLResponse(on connection: NWConnection) {
         let html = Self.webPortalHTML
         let bodyData = Data(html.utf8)
         let header = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
@@ -228,7 +229,7 @@ final class WiFiTransferServer: ObservableObject {
         })
     }
 
-    private func sendJSONResponse(on connection: NWConnection, status: String, json: String) {
+    nonisolated private func sendJSONResponse(on connection: NWConnection, status: String, json: String) {
         let bodyData = Data(json.utf8)
         let header = "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
         var response = Data(header.utf8)
