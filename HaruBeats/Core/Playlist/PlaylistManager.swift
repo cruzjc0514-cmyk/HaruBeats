@@ -50,6 +50,11 @@ final class PlaylistManager: ObservableObject {
         savePlaylists()
     }
 
+    func deletePlaylist(id: UUID) {
+        playlists.removeAll { $0.id == id }
+        savePlaylists()
+    }
+
     func addSongs(_ songs: [Song], to playlistID: UUID) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         for song in songs {
@@ -64,6 +69,19 @@ final class PlaylistManager: ObservableObject {
     func removeSongs(at offsets: IndexSet, from playlistID: UUID) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].songFileNames.remove(atOffsets: offsets)
+        savePlaylists()
+    }
+
+    func removeSongByFileName(_ fileName: String, from playlistID: UUID) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        playlists[index].songFileNames.removeAll { $0 == fileName }
+        savePlaylists()
+    }
+
+    func purgeSongFromAllPlaylists(fileName: String) {
+        for idx in playlists.indices {
+            playlists[idx].songFileNames.removeAll { $0 == fileName }
+        }
         savePlaylists()
     }
 

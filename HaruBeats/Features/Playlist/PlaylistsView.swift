@@ -132,7 +132,7 @@ struct PlaylistsView: View {
 
     private var playlistsListView: some View {
         List {
-            ForEach(playlistManager.playlists) { playlist in
+            ForEach(playlistManager.playlists, id: \.id) { playlist in
                 let resolved = playlistManager.resolvedSongs(for: playlist, in: audioManager.library)
                 NavigationLink(destination: PlaylistDetailView(playlistID: playlist.id)) {
                     PlaylistRowView(playlist: playlist, songs: resolved, accentColor: accentColor)

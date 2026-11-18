@@ -14,8 +14,9 @@ enum M3U8Parser {
         }
 
         let defaultName = url.deletingPathExtension().lastPathComponent
-        guard let rawContent = try? String(contentsOf: url, encoding: .utf8)
-                ?? String(contentsOf: url, encoding: .isoLatin1) else {
+        let utf8Text = try? String(contentsOf: url, encoding: .utf8)
+        let latin1Text = try? String(contentsOf: url, encoding: .isoLatin1)
+        guard let rawContent = utf8Text ?? latin1Text else {
             return M3U8ImportResult(playlistName: defaultName, matchedSongs: [], unmatchedEntries: [])
         }
 
