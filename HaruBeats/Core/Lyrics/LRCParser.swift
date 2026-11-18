@@ -2,51 +2,51 @@ import Foundation
 
 struct LyricLine: Identifiable, Equatable {
     let id = UUID()
-    let time: TimeInterval
+    let timestamp: TimeInterval
     let text: String
 }
 
 enum LRCParser {
     static func parse(content: String) -> [LyricLine] {
-        var lines: [LyricLine] = []
-        let pattern = #"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]"#
+        var result: [LyricLine] = []
+        let lines = content.components(separatedBy: .newlines)
+        let pattern = #"\[(\d{1,2}):(\d{2})(?:[\.:](\d{1,3}))?\]"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
 
-        let rawLines = content.components(separatedBy: .newlines)
-
-        for rawLine in rawLines {
-            let nsRange = NSRange(rawLine.startIndex..., in: rawLine)
-            let matches = regex.matches(in: rawLine, range: nsRange)
+        for rawLine in lines {
+            let nsLine = rawLine as NSString
+            let matches = regex.matches(in: rawLine, range: NSRange(location: 0, length: nsLine.length))
             guard !matches.isEmpty else { continue }
 
-            // Extraer el texto que queda después de la última marca de tiempo
-            guard let lastMatch = matches.last,
-                  let lastRange = Range(lastMatch.range, in: rawLine) else { continue }
-
-            let lyricText = String(rawLine[lastRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-            // Si una línea está vacía (pausa instrumental), conservamos "♪" sutil o espacio
-            let displayText = lyricText.isEmpty ? "•••" : lyricText
+            var lyricText = rawLine
+            for match in matches.reversed() {
+                if let range = Range(match.range, in: lyricText) {
+                    lyricText.removeSubrange(range)
+                }
+            }
+            let cleanedText = lyricText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedText.isEmpty else { continue }
 
             for match in matches {
-                guard let minRange = Range(match.range(at: 1), in: rawLine),
-                      let secRange = Range(match.range(at: 2), in: rawLine),
-                      let minutes = Double(rawLine[minRange]),
-                      let seconds = Double(rawLine[secRange]) else { continue }
+                let minStr = nsLine.substring(with: match.range(at: 1))
+                let secStr = nsLine.substring(with: match.range(at: 2))
+                let fracRange = match.range(at: 3)
+                let fracStr = fracRange.location != NSNotFound ? nsLine.substring(with: fracRange) : "0"
 
-                var fraction: Double = 0
-                if match.range(at: 3).location != NSNotFound,
-                   let fracRange = Range(match.range(at: 3), in: rawLine) {
-                    let fracStr = String(rawLine[fracRange])
-                    if let rawFrac = Double(fracStr) {
-                        fraction = rawFrac / pow(10.0, Double(fracStr.count))
-                    }
+                let minutes = Double(minStr) ?? 0
+                let seconds = Double(secStr) ?? 0
+                let fraction: Double
+                if fracStr.count == 3 {
+                    fraction = (Double(fracStr) ?? 0) / 1000.0
+                } else {
+                    fraction = (Double(fracStr) ?? 0) / 100.0
                 }
 
                 let totalSeconds = (minutes * 60.0) + seconds + fraction
-                lines.append(LyricLine(time: totalSeconds, text: displayText))
+                result.append(LyricLine(timestamp: totalSeconds, text: cleanedText))
             }
         }
 
-        return lines.sorted { $0.time < $1.time }
+        return result.sorted { $0.timestamp < $1.timestamp }
     }
 }

@@ -25,7 +25,7 @@ struct LyricsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
+        Group {
             if audioManager.currentLyrics.isEmpty {
                 emptyLyricsView
             } else {
@@ -89,20 +89,15 @@ struct LyricsView: View {
                         Spacer().frame(height: 16)
 
                         ForEach(audioManager.currentLyrics) { line in
-                            let isActive = (line.id == activeLineID)
-                            Text(line.text)
-                                .font(.system(
-                                    size: (isActive ? 25 : 20) * audioManager.lyricsFontScale,
-                                    weight: isActive ? .bold : .semibold,
-                                    design: .rounded
-                                ))
-                                .foregroundStyle(isActive ? .white : Color.white.opacity(0.35))
-                                .scaleEffect(isActive ? 1.02 : 1.0, anchor: .leading)
-                                .animation(.easeOut(duration: 0.2), value: isActive)
-                                .id(line.id)
-                                .onTapGesture {
-                                    audioManager.seek(to: max(line.timestamp - audioManager.lyricsOffset, 0))
-                                }
+                            LyricRowView(
+                                line: line,
+                                isActive: line.id == activeLineID,
+                                fontScale: audioManager.lyricsFontScale
+                            ) {
+                                let target = max(line.timestamp - audioManager.lyricsOffset, 0)
+                                audioManager.seek(to: target)
+                            }
+                            .id(line.id)
                         }
 
                         Spacer().frame(height: 120)
@@ -186,5 +181,25 @@ struct LyricsView: View {
         }
         .padding(.horizontal, 24)
         .padding(.top, 4)
+    }
+}
+
+private struct LyricRowView: View {
+    let line: LyricLine
+    let isActive: Bool
+    let fontScale: Double
+    let onTap: () -> Void
+
+    var body: some View {
+        Text(line.text)
+            .font(.system(
+                size: (isActive ? 25 : 20) * fontScale,
+                weight: isActive ? .bold : .semibold,
+                design: .rounded
+            ))
+            .foregroundStyle(isActive ? .white : Color.white.opacity(0.35))
+            .scaleEffect(isActive ? 1.02 : 1.0, anchor: .leading)
+            .animation(.easeOut(duration: 0.2), value: isActive)
+            .onTapGesture(perform: onTap)
     }
 }
