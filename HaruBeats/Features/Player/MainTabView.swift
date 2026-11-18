@@ -1,7 +1,12 @@
 import SwiftUI
 
 struct MainTabView: View {
+    @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
     @State private var showFullPlayer = false
+
+    private var accentColor: Color {
+        (AccentOption(rawValue: accentRaw) ?? .indigo).color
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -21,7 +26,7 @@ struct MainTabView: View {
                 SettingsView()
                     .tabItem { Label("Ajustes", systemImage: "gearshape.fill") }
             }
-            .tint(.indigo)
+            .tint(accentColor)
 
             VStack(spacing: 0) {
                 MiniPlayerView(showFullPlayer: $showFullPlayer)

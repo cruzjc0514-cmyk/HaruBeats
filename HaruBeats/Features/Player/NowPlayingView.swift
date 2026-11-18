@@ -2,8 +2,14 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
+    @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
     @State private var dragProgress: Double? = nil
     @State private var showLyrics: Bool = false
+    @State private var showEQSheet: Bool = false
+
+    private var accentColor: Color {
+        (AccentOption(rawValue: accentRaw) ?? .indigo).color
+    }
 
     var body: some View {
         ZStack {
@@ -19,7 +25,7 @@ struct NowPlayingView: View {
                         .clipped()
                 } else {
                     LinearGradient(
-                        colors: [Color.indigo.opacity(0.45), AppTheme.background],
+                        colors: [accentColor.opacity(0.45), AppTheme.background],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -28,15 +34,13 @@ struct NowPlayingView: View {
             .ignoresSafeArea()
 
             if let song = audioManager.currentSong {
-                VStack(spacing: 16) {
-                    // Indicador de arrastre centrado con margen seguro
+                VStack(spacing: 14) {
                     Capsule()
                         .fill(Color.white.opacity(0.35))
                         .frame(width: 40, height: 5)
                         .padding(.top, 14)
 
                     if showLyrics {
-                        // Encabezado compacto con miniatura, título y botón de letras alineado
                         HStack(spacing: 12) {
                             Group {
                                 if let uiImage = song.artworkImage {
@@ -71,8 +75,8 @@ struct NowPlayingView: View {
                         LyricsView()
                             .frame(maxHeight: .infinity)
                     } else {
-                        // Barra superior derecha para abrir letras sin chocar con el borde
                         HStack {
+                            AudioVisualizerView(isPlaying: audioManager.isPlaying, accentColor: accentColor)
                             Spacer()
                             lyricsToggleButton
                         }
@@ -90,11 +94,11 @@ struct NowPlayingView: View {
                                     AppTheme.cardBackground
                                     Image(systemName: "waveform")
                                         .font(.system(size: 72))
-                                        .foregroundStyle(.indigo)
+                                        .foregroundStyle(accentColor)
                                 }
                             }
                         }
-                        .frame(width: 290, height: 290)
+                        .frame(width: 280, height: 280)
                         .clipShape(RoundedRectangle(cornerRadius: 24))
                         .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
 
@@ -169,7 +173,7 @@ struct NowPlayingView: View {
                         } label: {
                             Image(systemName: "shuffle")
                                 .font(.title3)
-                                .foregroundStyle(audioManager.isShuffle ? .indigo : .white.opacity(0.7))
+                                .foregroundStyle(audioManager.isShuffle ? accentColor : .white.opacity(0.7))
                         }
 
                         Button {
@@ -184,7 +188,7 @@ struct NowPlayingView: View {
                             audioManager.togglePlayPause()
                         } label: {
                             Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 72))
+                                .font(.system(size: 70))
                                 .foregroundStyle(.white)
                         }
 
@@ -201,13 +205,67 @@ struct NowPlayingView: View {
                         } label: {
                             Image(systemName: audioManager.isRepeatOne ? "repeat.1" : "repeat")
                                 .font(.title3)
-                                .foregroundStyle(audioManager.isRepeatOne ? .indigo : .white.opacity(0.7))
+                                .foregroundStyle(audioManager.isRepeatOne ? accentColor : .white.opacity(0.7))
                         }
                     }
-                    .padding(.bottom, 18)
+
+                    // Herramientas de audio (Ecualizador y Temporizador)
+                    HStack(spacing: 28) {
+                        Button {
+                            showEQSheet = true
+                        } label: {
+                            Label(audioManager.isEQEnabled ? audioManager.selectedPreset.rawValue : "EQ Off", systemImage: "slider.vertical.3")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.white.opacity(0.14))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+
+                        Menu {
+                            Button("15 minutos") { audioManager.startSleepTimer(minutes: 15) }
+                            Button("30 minutos") { audioManager.startSleepTimer(minutes: 30) }
+                            Button("45 minutos") { audioManager.startSleepTimer(minutes: 45) }
+                            Button("60 minutos") { audioManager.startSleepTimer(minutes: 60) }
+                            Button("Al terminar esta canción") { audioManager.enableStopAfterCurrentSong() }
+                            if audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong {
+                                Divider()
+                                Button("Desactivar temporizador", role: .destructive) {
+                                    audioManager.cancelSleepTimer()
+                                }
+                            }
+                        } label: {
+                            Label(sleepTimerLabel, systemImage: "moon.zzz.fill")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(isSleepTimerActive ? accentColor.opacity(0.35) : Color.white.opacity(0.14))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.bottom, 16)
                 }
             }
         }
+        .sheet(isPresented: $showEQSheet) {
+            EqualizerSheetView()
+        }
+    }
+
+    private var isSleepTimerActive: Bool {
+        audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong
+    }
+
+    private var sleepTimerLabel: String {
+        if audioManager.stopAfterCurrentSong { return "Fin de pista" }
+        if let rem = audioManager.sleepTimerRemaining {
+            let mins = Int(rem) / 60
+            let secs = Int(rem) % 60
+            return String(format: "%d:%02d", mins, secs)
+        }
+        return "Temporizador"
     }
 
     private var lyricsToggleButton: some View {

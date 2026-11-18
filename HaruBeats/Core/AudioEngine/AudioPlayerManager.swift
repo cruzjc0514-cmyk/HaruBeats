@@ -4,7 +4,7 @@ import MediaPlayer
 import Combine
 
 @MainActor
-final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
+final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var library: [Song] = []
     @Published var playbackQueue: [Song] = []
     @Published var currentSong: Song?
@@ -16,8 +16,31 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     @Published var isRepeatOne: Bool = false
     @Published var isScrubbing: Bool = false
 
-    private var player: AVAudioPlayer?
+    // Ecualizador de 5 bandas
+    @Published var isEQEnabled: Bool = true {
+        didSet { eqNode.bypass = !isEQEnabled; saveEQSettings() }
+    }
+    @Published var selectedPreset: EqualizerPreset = .flat
+    @Published var bandGains: [Float] = [0, 0, 0, 0, 0]
+
+    // Temporizador de apagado
+    @Published var sleepTimerRemaining: TimeInterval? = nil
+    @Published var stopAfterCurrentSong: Bool = false
+
+    // Motor AVAudioEngine
+    private let engine = AVAudioEngine()
+    private let playerNode = AVAudioPlayerNode()
+    private let eqNode = AVAudioUnitEQ(numberOfBands: 5)
+    private let frequencies: [Float] = [60, 230, 910, 3600, 14000]
+
+    private var audioFile: AVAudioFile?
+    private var seekFrameOffset: AVAudioFramePosition = 0
+    private var totalFrames: AVAudioFramePosition = 0
+    private var sampleRate: Double = 44100
+    private var playbackSessionID = UUID()
+
     private var timer: Timer?
+    private var sleepTimer: Timer?
 
     private var documentsDirectory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -33,12 +56,111 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     override init() {
         super.init()
+        setupAudioEngine()
+        loadEQSettings()
         configureAudioSession()
         setupRemoteTransportControls()
         Task {
             await loadStoredLibrary()
         }
     }
+
+    private func setupAudioEngine() {
+        engine.attach(playerNode)
+        engine.attach(eqNode)
+
+        for (index, freq) in frequencies.enumerated() {
+            let band = eqNode.bands[index]
+            band.filterType = .parametric
+            band.frequency = freq
+            band.bandwidth = 1.0
+            band.gain = 0
+            band.bypass = false
+        }
+
+        engine.connect(playerNode, to: eqNode, format: nil)
+        engine.connect(eqNode, to: engine.mainMixerNode, format: nil)
+    }
+
+    func applyPreset(_ preset: EqualizerPreset) {
+        selectedPreset = preset
+        if preset != .custom {
+            bandGains = preset.gains
+        }
+        syncEQBands()
+        saveEQSettings()
+    }
+
+    func updateBand(index: Int, gain: Float) {
+        guard index >= 0, index < bandGains.count else { return }
+        bandGains[index] = gain
+        selectedPreset = .custom
+        syncEQBands()
+        saveEQSettings()
+    }
+
+    private func syncEQBands() {
+        for (index, gain) in bandGains.enumerated() where index < eqNode.bands.count {
+            eqNode.bands[index].gain = gain
+        }
+    }
+
+    private func saveEQSettings() {
+        UserDefaults.standard.set(isEQEnabled, forKey: "hb_eq_enabled")
+        UserDefaults.standard.set(selectedPreset.rawValue, forKey: "hb_eq_preset")
+        UserDefaults.standard.set(bandGains, forKey: "hb_eq_gains")
+    }
+
+    private func loadEQSettings() {
+        if UserDefaults.standard.object(forKey: "hb_eq_enabled") != nil {
+            isEQEnabled = UserDefaults.standard.bool(forKey: "hb_eq_enabled")
+        }
+        if let rawPreset = UserDefaults.standard.string(forKey: "hb_eq_preset"),
+           let preset = EqualizerPreset(rawValue: rawPreset) {
+            selectedPreset = preset
+        }
+        if let savedGains = UserDefaults.standard.array(forKey: "hb_eq_gains") as? [Float], savedGains.count == 5 {
+            bandGains = savedGains
+        }
+        eqNode.bypass = !isEQEnabled
+        syncEQBands()
+    }
+
+    // MARK: - Temporizador de apagado
+
+    func startSleepTimer(minutes: Int) {
+        cancelSleepTimer()
+        stopAfterCurrentSong = false
+        sleepTimerRemaining = TimeInterval(minutes * 60)
+
+        sleepTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let remaining = self.sleepTimerRemaining else { return }
+                if remaining <= 1 {
+                    self.cancelSleepTimer()
+                    if self.isPlaying {
+                        self.togglePlayPause()
+                    }
+                } else {
+                    self.sleepTimerRemaining = remaining - 1
+                }
+            }
+        }
+    }
+
+    func enableStopAfterCurrentSong() {
+        cancelSleepTimer()
+        stopAfterCurrentSong = true
+    }
+
+    func cancelSleepTimer() {
+        sleepTimer?.invalidate()
+        sleepTimer = nil
+        sleepTimerRemaining = nil
+        stopAfterCurrentSong = false
+    }
+
+    // MARK: - Sesión y controles remotos
 
     private func configureAudioSession() {
         do {
@@ -110,6 +232,8 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
+
+    // MARK: - Biblioteca e importación
 
     func loadStoredLibrary() async {
         guard let files = try? FileManager.default.contentsOfDirectory(
@@ -203,7 +327,6 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         return (folderName, orderedSongs)
     }
 
-    /// Guarda un archivo recibido vía Wi-Fi y devuelve la canción si es audio
     func saveTransferredFile(fileName: String, data: Data) async -> (destination: URL, song: Song?)? {
         let destination = musicDirectory.appendingPathComponent(fileName)
         do {
@@ -223,7 +346,6 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
     }
 
-    /// Escanea archivos copiados por cable USB desde iTunes / Dispositivos Apple en Windows
     func scanUSBSharedFiles() async -> Int {
         guard let rootFiles = try? FileManager.default.contentsOfDirectory(
             at: documentsDirectory,
@@ -290,6 +412,8 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
     }
 
+    // MARK: - Reproducción con AVAudioEngine
+
     func play(song: Song, inQueue queue: [Song]? = nil) {
         if let queue, !queue.isEmpty {
             playbackQueue = queue
@@ -299,33 +423,87 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 
         do {
             configureAudioSession()
-            player?.stop()
-            player = try AVAudioPlayer(contentsOf: song.fileURL)
-            player?.delegate = self
-            player?.prepareToPlay()
-            player?.play()
-
+            let file = try AVAudioFile(forReading: song.fileURL)
+            audioFile = file
+            sampleRate = file.processingFormat.sampleRate
+            totalFrames = file.length
+            duration = Double(totalFrames) / sampleRate
+            seekFrameOffset = 0
             currentSong = song
-            duration = player?.duration ?? song.duration
             currentTime = 0
+
+            // Reconectar con el formato exacto del archivo actual (44.1kHz, 48kHz, 96kHz, etc.)
+            playerNode.stop()
+            engine.disconnectNodeOutput(playerNode)
+            engine.disconnectNodeOutput(eqNode)
+            engine.connect(playerNode, to: eqNode, format: file.processingFormat)
+            engine.connect(eqNode, to: engine.mainMixerNode, format: file.processingFormat)
+
+            if !engine.isRunning {
+                try engine.start()
+            }
+
+            scheduleSegment(fromFrame: 0)
+            playerNode.play()
+
             isPlaying = true
             loadLyrics(for: song)
             updateNowPlayingInfo()
             startTimer()
         } catch {
-            print("Error reproduciendo \(song.title): \(error)")
+            print("Error reproduciendo con AVAudioEngine \(song.title): \(error)")
+        }
+    }
+
+    private func scheduleSegment(fromFrame startFrame: AVAudioFramePosition) {
+        guard let file = audioFile else { return }
+        let framesRemaining = AVAudioFrameCount(max(totalFrames - startFrame, 0))
+        guard framesRemaining > 0 else { return }
+
+        let sessionID = UUID()
+        playbackSessionID = sessionID
+
+        playerNode.scheduleSegment(
+            file,
+            startingFrame: startFrame,
+            frameCount: framesRemaining,
+            at: nil
+        ) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.playbackSessionID == sessionID, self.isPlaying else { return }
+                self.handleTrackCompleted()
+            }
+        }
+    }
+
+    private func handleTrackCompleted() {
+        if stopAfterCurrentSong {
+            stopAfterCurrentSong = false
+            isPlaying = false
+            stopTimer()
+            currentTime = 0
+            updateNowPlayingInfo()
+            return
+        }
+
+        if isRepeatOne, let current = currentSong {
+            play(song: current)
+        } else {
+            playNext()
         }
     }
 
     func togglePlayPause() {
-        guard let player else { return }
-        if player.isPlaying {
-            player.pause()
+        if isPlaying {
+            playerNode.pause()
             isPlaying = false
             stopTimer()
         } else {
             configureAudioSession()
-            player.play()
+            if !engine.isRunning {
+                try? engine.start()
+            }
+            playerNode.play()
             isPlaying = true
             startTimer()
         }
@@ -333,9 +511,23 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     func seek(to time: TimeInterval) {
-        guard let player else { return }
-        player.currentTime = time
-        currentTime = time
+        guard audioFile != nil else { return }
+        let clampedTime = min(max(time, 0), duration)
+        let targetFrame = AVAudioFramePosition(clampedTime * sampleRate)
+        let wasPlaying = isPlaying
+
+        playbackSessionID = UUID() // invalidar callback anterior
+        playerNode.stop()
+        seekFrameOffset = targetFrame
+        currentTime = clampedTime
+
+        if targetFrame < totalFrames {
+            scheduleSegment(fromFrame: targetFrame)
+            if wasPlaying {
+                if !engine.isRunning { try? engine.start() }
+                playerNode.play()
+            }
+        }
         updateNowPlayingInfo()
     }
 
@@ -371,22 +563,17 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         play(song: activeQueue[prevIndex])
     }
 
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in
-            if self.isRepeatOne, let current = self.currentSong {
-                self.play(song: current)
-            } else {
-                self.playNext()
-            }
-        }
-    }
-
     private func startTimer() {
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let player = self.player, !self.isScrubbing else { return }
-                self.currentTime = player.currentTime
+                guard let self, !self.isScrubbing,
+                      let nodeTime = self.playerNode.lastRenderTime,
+                      let playerTime = self.playerNode.playerTime(forNodeTime: nodeTime) else { return }
+
+                let playedSeconds = Double(playerTime.sampleTime) / self.sampleRate
+                let offsetSeconds = Double(self.seekFrameOffset) / self.sampleRate
+                self.currentTime = min(max(offsetSeconds + playedSeconds, 0), self.duration)
             }
         }
     }

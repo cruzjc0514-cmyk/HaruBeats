@@ -4,12 +4,37 @@ struct SettingsView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
     @EnvironmentObject var playlistManager: PlaylistManager
     @StateObject private var wifiServer = WiFiTransferServer()
+    @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
     @State private var usbMessage: String? = nil
+    @State private var showEQSheet = false
 
     var body: some View {
         NavigationStack {
             List {
-                // Sección 1: Transferencia inalámbrica por Wi-Fi
+                // Sección 1: Apariencia y Ecualizador
+                Section("Apariencia y Audio") {
+                    Picker("Color de acento", selection: $accentRaw) {
+                        ForEach(AccentOption.allCases) { option in
+                            Text(option.rawValue).tag(option.rawValue)
+                        }
+                    }
+                    .listRowBackground(AppTheme.cardBackground)
+
+                    Button {
+                        showEQSheet = true
+                    } label: {
+                        HStack {
+                            Label("Ecualizador de 5 bandas", systemImage: "slider.vertical.3")
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Text(audioManager.isEQEnabled ? audioManager.selectedPreset.rawValue : "Desactivado")
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+                    .listRowBackground(AppTheme.cardBackground)
+                }
+
+                // Sección 2: Transferencia inalámbrica por Wi-Fi
                 Section {
                     Toggle(isOn: Binding(
                         get: { wifiServer.isRunning },
@@ -56,7 +81,7 @@ struct SettingsView: View {
                     Text("Mantén HaruBeats abierto mientras transfieres carpetas o canciones desde Windows 11.")
                 }
 
-                // Sección 2: Transferencia por cable USB
+                // Sección 3: Transferencia por cable USB
                 Section {
                     Button {
                         Task {
@@ -76,7 +101,7 @@ struct SettingsView: View {
                     Text("Transferencia por cable USB")
                 }
 
-                // Sección 3: Resumen de biblioteca
+                // Sección 4: Resumen de biblioteca
                 Section("Colección local") {
                     HStack {
                         Text("Canciones almacenadas")
@@ -98,6 +123,9 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
             .navigationTitle("Ajustes")
+            .sheet(isPresented: $showEQSheet) {
+                EqualizerSheetView()
+            }
             .alert("Transferencia USB", isPresented: Binding(
                 get: { usbMessage != nil },
                 set: { if !$0 { usbMessage = nil } }
@@ -113,14 +141,12 @@ struct SettingsView: View {
         wifiServer.onFileReceived = { fileName, folderName, data in
             guard let saved = await audioManager.saveTransferredFile(fileName: fileName, data: data) else { return }
 
-            // Si subiste un .m3u8 por Wi-Fi, lo importamos como playlist automáticamente
             if fileName.lowercased().hasSuffix(".m3u8") || fileName.lowercased().hasSuffix(".m3u") {
                 let result = M3U8Parser.parseAndResolve(url: saved.destination, library: audioManager.library)
                 playlistManager.createPlaylist(name: result.playlistName, songs: result.matchedSongs)
                 return
             }
 
-            // Si venía dentro de una carpeta, creamos o agregamos a la playlist con el nombre de la carpeta
             if let folderName, !folderName.isEmpty, let song = saved.song {
                 if let existing = playlistManager.playlists.first(where: { $0.name == folderName }) {
                     playlistManager.addSongs([song], to: existing.id)
