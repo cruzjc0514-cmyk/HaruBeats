@@ -2,11 +2,10 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
-    @Environment(\.dismiss) private var dismiss
+    @State private var dragTime: TimeInterval = 0
 
     var body: some View {
         ZStack {
-            // Fondo ambiental derivado de la portada
             if let song = audioManager.currentSong, let uiImage = song.artworkImage {
                 Image(uiImage: uiImage)
                     .resizable()
@@ -25,7 +24,6 @@ struct NowPlayingView: View {
 
             if let song = audioManager.currentSong {
                 VStack(spacing: 26) {
-                    // Indicador superior para deslizar hacia abajo
                     Capsule()
                         .fill(Color.white.opacity(0.35))
                         .frame(width: 40, height: 5)
@@ -33,7 +31,6 @@ struct NowPlayingView: View {
 
                     Spacer()
 
-                    // Portada grande
                     Group {
                         if let uiImage = song.artworkImage {
                             Image(uiImage: uiImage)
@@ -52,7 +49,6 @@ struct NowPlayingView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 24))
                     .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
 
-                    // Título, artista y álbum
                     VStack(spacing: 6) {
                         Text(song.title)
                             .font(.title2.bold())
@@ -67,19 +63,29 @@ struct NowPlayingView: View {
                     }
                     .padding(.horizontal, 24)
 
-                    // Barra de progreso
+                    // Barra de progreso sin saltos al arrastrar
                     VStack(spacing: 6) {
                         Slider(
                             value: Binding(
-                                get: { audioManager.currentTime },
-                                set: { audioManager.seek(to: $0) }
+                                get: { audioManager.isScrubbing ? dragTime : audioManager.currentTime },
+                                set: { newValue in
+                                    dragTime = newValue
+                                }
                             ),
-                            in: 0...max(audioManager.duration, 1)
+                            in: 0...max(audioManager.duration, 1),
+                            onEditingChanged: { editing in
+                                audioManager.isScrubbing = editing
+                                if editing {
+                                    dragTime = audioManager.currentTime
+                                } else {
+                                    audioManager.seek(to: dragTime)
+                                }
+                            }
                         )
                         .tint(.white)
 
                         HStack {
-                            Text(formatTime(audioManager.currentTime))
+                            Text(formatTime(audioManager.isScrubbing ? dragTime : audioManager.currentTime))
                             Spacer()
                             Text(formatTime(audioManager.duration))
                         }
@@ -88,7 +94,6 @@ struct NowPlayingView: View {
                     }
                     .padding(.horizontal, 28)
 
-                    // Controles principales
                     HStack(spacing: 34) {
                         Button {
                             audioManager.isShuffle.toggle()

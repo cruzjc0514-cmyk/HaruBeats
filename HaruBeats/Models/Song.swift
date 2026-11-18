@@ -28,24 +28,38 @@ struct Song: Identifiable, Hashable {
             duration = CMTimeGetSeconds(loadedDuration)
         }
 
+        // 1. Si es FLAC, leer metadatos y carátula directamente de los bloques Vorbis/Picture
+        if url.pathExtension.lowercased() == "flac" {
+            let flacMeta = FLACMetadataParser.parse(url: url)
+            if let t = flacMeta.title, !t.isEmpty { title = t }
+            if let a = flacMeta.artist, !a.isEmpty { artist = a }
+            if let al = flacMeta.album, !al.isEmpty { album = al }
+            if let art = flacMeta.artworkData { artworkData = art }
+        }
+
+        // 2. Respaldo con AVFoundation (para MP3, M4A, ALAC o etiquetas adicionales)
         if let metadata = try? await asset.load(.commonMetadata) {
             for item in metadata {
                 guard let key = item.commonKey else { continue }
                 switch key {
                 case .commonKeyTitle:
-                    if let val = try? await item.load(.stringValue), !val.isEmpty {
+                    if title == url.deletingPathExtension().lastPathComponent,
+                       let val = try? await item.load(.stringValue), !val.isEmpty {
                         title = val
                     }
                 case .commonKeyArtist:
-                    if let val = try? await item.load(.stringValue), !val.isEmpty {
+                    if artist == "Artista desconocido",
+                       let val = try? await item.load(.stringValue), !val.isEmpty {
                         artist = val
                     }
                 case .commonKeyAlbumName:
-                    if let val = try? await item.load(.stringValue), !val.isEmpty {
+                    if album == "Álbum desconocido",
+                       let val = try? await item.load(.stringValue), !val.isEmpty {
                         album = val
                     }
                 case .commonKeyArtwork:
-                    if let data = try? await item.load(.dataValue) {
+                    if artworkData == nil,
+                       let data = try? await item.load(.dataValue) {
                         artworkData = data
                     }
                 default:

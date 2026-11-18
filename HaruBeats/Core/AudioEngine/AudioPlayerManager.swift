@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import MediaPlayer
 import Combine
 
 @MainActor
@@ -11,6 +12,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     @Published var duration: TimeInterval = 0
     @Published var isShuffle: Bool = false
     @Published var isRepeatOne: Bool = false
+    @Published var isScrubbing: Bool = false
 
     private var player: AVAudioPlayer?
     private var timer: Timer?
@@ -27,6 +29,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     override init() {
         super.init()
         configureAudioSession()
+        setupRemoteTransportControls()
         Task {
             await loadStoredLibrary()
         }
@@ -34,11 +37,73 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     private func configureAudioSession() {
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true)
         } catch {
             print("Error configurando AVAudioSession: \(error)")
         }
+    }
+
+    private func setupRemoteTransportControls() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.isPlaying else { return }
+                self.togglePlayPause()
+            }
+            return .success
+        }
+
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isPlaying else { return }
+                self.togglePlayPause()
+            }
+            return .success
+        }
+
+        commandCenter.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.playNext()
+            }
+            return .success
+        }
+
+        commandCenter.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.playPrevious()
+            }
+            return .success
+        }
+
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            Task { @MainActor in
+                self?.seek(to: positionEvent.positionTime)
+            }
+            return .success
+        }
+    }
+
+    private func updateNowPlayingInfo() {
+        guard let song = currentSong else { return }
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: song.title,
+            MPMediaItemPropertyArtist: song.artist,
+            MPMediaItemPropertyAlbumTitle: song.album,
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+        ]
+
+        if let image = song.artworkImage {
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            info[MPMediaItemPropertyArtwork] = artwork
+        }
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     func loadStoredLibrary() async {
@@ -80,6 +145,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
 
     func play(song: Song) {
         do {
+            configureAudioSession()
             player?.stop()
             player = try AVAudioPlayer(contentsOf: song.fileURL)
             player?.delegate = self
@@ -90,6 +156,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             duration = player?.duration ?? song.duration
             currentTime = 0
             isPlaying = true
+            updateNowPlayingInfo()
             startTimer()
         } catch {
             print("Error reproduciendo \(song.title): \(error)")
@@ -103,16 +170,19 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             isPlaying = false
             stopTimer()
         } else {
+            configureAudioSession()
             player.play()
             isPlaying = true
             startTimer()
         }
+        updateNowPlayingInfo()
     }
 
     func seek(to time: TimeInterval) {
         guard let player else { return }
         player.currentTime = time
         currentTime = time
+        updateNowPlayingInfo()
     }
 
     func playNext() {
@@ -157,7 +227,7 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let player = self.player else { return }
+                guard let self, let player = self.player, !self.isScrubbing else { return }
                 self.currentTime = player.currentTime
             }
         }
