@@ -19,7 +19,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                // Sección 1: Apariencia y Audio
                 Section("Apariencia y Audio") {
                     Toggle(isOn: $useDynamicColors) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -40,12 +39,24 @@ struct SettingsView: View {
                     }
                     .listRowBackground(AppTheme.cardBackground)
 
-                    Picker("Crossfade entre canciones", selection: $audioManager.crossfadeDuration) {
-                        Text("Desactivado").tag(0.0)
-                        Text("2 segundos").tag(2.0)
-                        Text("4 segundos").tag(4.0)
-                        Text("6 segundos").tag(6.0)
+                    Picker("Transición entre canciones", selection: $audioManager.crossfadeDuration) {
+                        Text("Gapless (Sin pausas)").tag(0.0)
+                        Text("Crossfade 2 s").tag(2.0)
+                        Text("Crossfade 4 s").tag(4.0)
+                        Text("Crossfade 6 s").tag(6.0)
                     }
+                    .listRowBackground(AppTheme.cardBackground)
+
+                    Toggle(isOn: $audioManager.isReplayGainEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Normalización ReplayGain")
+                                .foregroundStyle(.white)
+                            Text("Nivela el volumen según las etiquetas FLAC")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+                    .tint(effectiveAccent)
                     .listRowBackground(AppTheme.cardBackground)
 
                     Button {
@@ -62,7 +73,6 @@ struct SettingsView: View {
                     .listRowBackground(AppTheme.cardBackground)
                 }
 
-                // Sección 2: Transferencia inalámbrica por Wi-Fi
                 Section {
                     Toggle(isOn: Binding(
                         get: { wifiServer.isRunning },
@@ -109,7 +119,6 @@ struct SettingsView: View {
                     Text("Mantén HaruBeats abierto mientras transfieres carpetas o canciones desde Windows 11.")
                 }
 
-                // Sección 3: Transferencia por cable USB
                 Section {
                     Button {
                         Task {
@@ -129,7 +138,6 @@ struct SettingsView: View {
                     Text("Transferencia por cable USB")
                 }
 
-                // Sección 4: Resumen de biblioteca y estadísticas
                 Section("Colección y estadísticas") {
                     HStack {
                         Text("Canciones almacenadas")

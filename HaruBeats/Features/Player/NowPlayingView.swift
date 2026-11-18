@@ -18,7 +18,6 @@ struct NowPlayingView: View {
 
     var body: some View {
         ZStack {
-            // Fondo ambiental dinámico
             GeometryReader { geo in
                 if let song = audioManager.currentSong, let uiImage = song.artworkImage {
                     Image(uiImage: uiImage)
@@ -55,214 +54,16 @@ struct NowPlayingView: View {
                         .padding(.top, 14)
 
                     if showLyrics {
-                        HStack(spacing: 12) {
-                            Group {
-                                if let uiImage = song.artworkImage {
-                                    Image(uiImage: uiImage)
-                                        .resizable()
-                                        .scaledToFill()
-                                } else {
-                                    AppTheme.cardBackground
-                                }
-                            }
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(song.title)
-                                    .font(.headline)
-                                    .foregroundStyle(.white)
-                                    .lineLimit(1)
-                                Text(song.artist)
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.secondaryText)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer()
-
-                            lyricsToggleButton
-                        }
-                        .padding(.horizontal, 26)
-                        .padding(.top, 4)
-
+                        lyricsHeaderView(for: song)
                         LyricsView()
                             .frame(maxHeight: .infinity)
                     } else {
-                        HStack {
-                            AudioVisualizerView(isPlaying: audioManager.isPlaying, accentColor: effectiveAccent)
-                            Spacer()
-                            lyricsToggleButton
-                        }
-                        .padding(.horizontal, 26)
-
-                        Spacer()
-
-                        Group {
-                            if let uiImage = song.artworkImage {
-                                Image(uiImage: uiImage)
-                                    .resizable()
-                                    .scaledToFill()
-                            } else {
-                                ZStack {
-                                    AppTheme.cardBackground
-                                    Image(systemName: "waveform")
-                                        .font(.system(size: 72))
-                                        .foregroundStyle(effectiveAccent)
-                                }
-                            }
-                        }
-                        .frame(width: 280, height: 280)
-                        .clipShape(RoundedRectangle(cornerRadius: 24))
-                        .shadow(color: effectiveAccent.opacity(0.35), radius: 24, y: 12)
-
-                        VStack(spacing: 6) {
-                            Text(song.title)
-                                .font(.title2.bold())
-                                .foregroundStyle(.white)
-                                .multilineTextAlignment(.center)
-                                .lineLimit(2)
-
-                            Text("\(song.artist) · \(song.album)")
-                                .font(.subheadline)
-                                .foregroundStyle(AppTheme.secondaryText)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 24)
-
-                        Spacer()
+                        artworkStageView(for: song)
                     }
 
-                    // Barra de progreso fluida a 120 Hz
-                    VStack(spacing: 6) {
-                        let safeDuration = max(audioManager.duration, 1)
-
-                        Slider(
-                            value: Binding(
-                                get: {
-                                    dragProgress ?? min(max(audioManager.currentTime, 0), safeDuration)
-                                },
-                                set: { newValue in
-                                    audioManager.isScrubbing = true
-                                    dragProgress = newValue
-                                }
-                            ),
-                            in: 0...safeDuration,
-                            onEditingChanged: { editing in
-                                if !editing {
-                                    if let target = dragProgress {
-                                        audioManager.seek(to: target)
-                                    }
-                                    dragProgress = nil
-                                    audioManager.isScrubbing = false
-                                }
-                            }
-                        )
-                        .tint(.white)
-
-                        HStack {
-                            let displayedTime = dragProgress ?? audioManager.currentTime
-                            Text(formatTime(displayedTime))
-                            Spacer()
-                            Text("-\(formatTime(max(safeDuration - displayedTime, 0)))")
-                        }
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(AppTheme.secondaryText)
-                    }
-                    .padding(.horizontal, 28)
-
-                    // Controles principales
-                    HStack(spacing: 34) {
-                        Button {
-                            audioManager.isShuffle.toggle()
-                        } label: {
-                            Image(systemName: "shuffle")
-                                .font(.title3)
-                                .foregroundStyle(audioManager.isShuffle ? effectiveAccent : .white.opacity(0.7))
-                        }
-
-                        Button {
-                            audioManager.playPrevious()
-                        } label: {
-                            Image(systemName: "backward.fill")
-                                .font(.title)
-                                .foregroundStyle(.white)
-                        }
-
-                        Button {
-                            audioManager.togglePlayPause()
-                        } label: {
-                            Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 70))
-                                .foregroundStyle(.white)
-                        }
-
-                        Button {
-                            audioManager.playNext()
-                        } label: {
-                            Image(systemName: "forward.fill")
-                                .font(.title)
-                                .foregroundStyle(.white)
-                        }
-
-                        Button {
-                            audioManager.isRepeatOne.toggle()
-                        } label: {
-                            Image(systemName: audioManager.isRepeatOne ? "repeat.1" : "repeat")
-                                .font(.title3)
-                                .foregroundStyle(audioManager.isRepeatOne ? effectiveAccent : .white.opacity(0.7))
-                        }
-                    }
-
-                    // Herramientas inferiores: Ecualizador, Temporizador y Cola interactiva
-                    HStack(spacing: 14) {
-                        Button {
-                            showEQSheet = true
-                        } label: {
-                            Label(audioManager.isEQEnabled ? audioManager.selectedPreset.rawValue : "EQ Off", systemImage: "slider.vertical.3")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Color.white.opacity(0.14))
-                                .foregroundStyle(.white)
-                                .clipShape(Capsule())
-                        }
-
-                        Menu {
-                            Button("15 minutos") { audioManager.startSleepTimer(minutes: 15) }
-                            Button("30 minutos") { audioManager.startSleepTimer(minutes: 30) }
-                            Button("45 minutos") { audioManager.startSleepTimer(minutes: 45) }
-                            Button("60 minutos") { audioManager.startSleepTimer(minutes: 60) }
-                            Button("Al terminar esta canción") { audioManager.enableStopAfterCurrentSong() }
-                            if audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong {
-                                Divider()
-                                Button("Desactivar temporizador", role: .destructive) {
-                                    audioManager.cancelSleepTimer()
-                                }
-                            }
-                        } label: {
-                            Label(sleepTimerLabel, systemImage: "moon.zzz.fill")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(isSleepTimerActive ? effectiveAccent.opacity(0.45) : Color.white.opacity(0.14))
-                                .foregroundStyle(.white)
-                                .clipShape(Capsule())
-                        }
-
-                        Button {
-                            showQueueSheet = true
-                        } label: {
-                            Label("Cola", systemImage: "list.bullet")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Color.white.opacity(0.14))
-                                .foregroundStyle(.white)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    .padding(.bottom, 16)
+                    progressBarSection
+                    mainTransportControls
+                    bottomUtilityPills
                 }
             }
         }
@@ -272,6 +73,240 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showQueueSheet) {
             QueueSheetView()
         }
+    }
+
+    private func lyricsHeaderView(for song: Song) -> some View {
+        HStack(spacing: 12) {
+            Group {
+                if let uiImage = song.artworkImage {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    AppTheme.cardBackground
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(song.title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(song.artist)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            lyricsToggleButton
+        }
+        .padding(.horizontal, 26)
+        .padding(.top, 4)
+    }
+
+    private func artworkStageView(for song: Song) -> some View {
+        VStack(spacing: 12) {
+            HStack {
+                AudioVisualizerView(isPlaying: audioManager.isPlaying, accentColor: effectiveAccent)
+                Spacer()
+                lyricsToggleButton
+            }
+            .padding(.horizontal, 26)
+
+            Spacer()
+
+            Group {
+                if let uiImage = song.artworkImage {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    ZStack {
+                        AppTheme.cardBackground
+                        Image(systemName: "waveform")
+                            .font(.system(size: 72))
+                            .foregroundStyle(effectiveAccent)
+                    }
+                }
+            }
+            .frame(width: 272, height: 272)
+            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .shadow(color: effectiveAccent.opacity(0.35), radius: 24, y: 12)
+
+            VStack(spacing: 6) {
+                Text(song.title)
+                    .font(.title2.bold())
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+
+                Text("\(song.artist) · \(song.album)")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .lineLimit(1)
+
+                // Insignia de calidad de audio (Hi-Res / Lossless / Sample Rate)
+                HStack(spacing: 5) {
+                    if song.isHiRes {
+                        Image(systemName: "hifispeaker.fill")
+                            .font(.caption2)
+                    }
+                    Text(song.audioQualityBadge)
+                        .font(.caption2.monospacedDigit().weight(.bold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(song.isHiRes ? effectiveAccent.opacity(0.32) : Color.white.opacity(0.12))
+                .foregroundStyle(song.isHiRes ? .white : AppTheme.secondaryText)
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(song.isHiRes ? effectiveAccent.opacity(0.75) : Color.clear, lineWidth: 0.8)
+                )
+                .padding(.top, 2)
+            }
+            .padding(.horizontal, 24)
+
+            Spacer()
+        }
+    }
+
+    private var progressBarSection: some View {
+        VStack(spacing: 6) {
+            let safeDuration = max(audioManager.duration, 1)
+
+            Slider(
+                value: Binding(
+                    get: {
+                        dragProgress ?? min(max(audioManager.currentTime, 0), safeDuration)
+                    },
+                    set: { newValue in
+                        audioManager.isScrubbing = true
+                        dragProgress = newValue
+                    }
+                ),
+                in: 0...safeDuration,
+                onEditingChanged: { editing in
+                    if !editing {
+                        if let target = dragProgress {
+                            audioManager.seek(to: target)
+                        }
+                        dragProgress = nil
+                        audioManager.isScrubbing = false
+                    }
+                }
+            )
+            .tint(.white)
+
+            HStack {
+                let displayedTime = dragProgress ?? audioManager.currentTime
+                Text(formatTime(displayedTime))
+                Spacer()
+                Text("-\(formatTime(max(safeDuration - displayedTime, 0)))")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(AppTheme.secondaryText)
+        }
+        .padding(.horizontal, 28)
+    }
+
+    private var mainTransportControls: some View {
+        HStack(spacing: 34) {
+            Button {
+                audioManager.isShuffle.toggle()
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.title3)
+                    .foregroundStyle(audioManager.isShuffle ? effectiveAccent : .white.opacity(0.7))
+            }
+
+            Button {
+                audioManager.playPrevious()
+            } label: {
+                Image(systemName: "backward.fill")
+                    .font(.title)
+                    .foregroundStyle(.white)
+            }
+
+            Button {
+                audioManager.togglePlayPause()
+            } label: {
+                Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 70))
+                    .foregroundStyle(.white)
+            }
+
+            Button {
+                audioManager.playNext()
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(.title)
+                    .foregroundStyle(.white)
+            }
+
+            Button {
+                audioManager.isRepeatOne.toggle()
+            } label: {
+                Image(systemName: audioManager.isRepeatOne ? "repeat.1" : "repeat")
+                    .font(.title3)
+                    .foregroundStyle(audioManager.isRepeatOne ? effectiveAccent : .white.opacity(0.7))
+            }
+        }
+    }
+
+    private var bottomUtilityPills: some View {
+        HStack(spacing: 14) {
+            Button {
+                showEQSheet = true
+            } label: {
+                Label(audioManager.isEQEnabled ? audioManager.selectedPreset.rawValue : "EQ Off", systemImage: "slider.vertical.3")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.14))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+
+            Menu {
+                Button("15 minutos") { audioManager.startSleepTimer(minutes: 15) }
+                Button("30 minutos") { audioManager.startSleepTimer(minutes: 30) }
+                Button("45 minutos") { audioManager.startSleepTimer(minutes: 45) }
+                Button("60 minutos") { audioManager.startSleepTimer(minutes: 60) }
+                Button("Al terminar esta canción") { audioManager.enableStopAfterCurrentSong() }
+                if audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong {
+                    Divider()
+                    Button("Desactivar temporizador", role: .destructive) {
+                        audioManager.cancelSleepTimer()
+                    }
+                }
+            } label: {
+                Label(sleepTimerLabel, systemImage: "moon.zzz.fill")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(isSleepTimerActive ? effectiveAccent.opacity(0.45) : Color.white.opacity(0.14))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+
+            Button {
+                showQueueSheet = true
+            } label: {
+                Label("Cola", systemImage: "list.bullet")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.14))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.bottom, 16)
     }
 
     private var isSleepTimerActive: Bool {
