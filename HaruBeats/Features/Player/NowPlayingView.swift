@@ -2,28 +2,33 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
-    @State private var dragTime: TimeInterval = 0
+    @State private var dragProgress: Double? = nil
 
     var body: some View {
         ZStack {
-            if let song = audioManager.currentSong, let uiImage = song.artworkImage {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFill()
-                    .ignoresSafeArea()
-                    .blur(radius: 70)
-                    .overlay(Color.black.opacity(0.55))
-            } else {
-                LinearGradient(
-                    colors: [Color.indigo.opacity(0.45), AppTheme.background],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
+            // 1. Fondo ambiental contenido dentro de los límites de pantalla
+            GeometryReader { geo in
+                if let song = audioManager.currentSong, let uiImage = song.artworkImage {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .blur(radius: 65)
+                        .overlay(Color.black.opacity(0.55))
+                        .clipped()
+                } else {
+                    LinearGradient(
+                        colors: [Color.indigo.opacity(0.45), AppTheme.background],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
             }
+            .ignoresSafeArea()
 
+            // 2. Contenido principal bien proporcionado
             if let song = audioManager.currentSong {
-                VStack(spacing: 26) {
+                VStack(spacing: 24) {
                     Capsule()
                         .fill(Color.white.opacity(0.35))
                         .frame(width: 40, height: 5)
@@ -31,6 +36,7 @@ struct NowPlayingView: View {
 
                     Spacer()
 
+                    // Portada grande
                     Group {
                         if let uiImage = song.artworkImage {
                             Image(uiImage: uiImage)
@@ -45,10 +51,11 @@ struct NowPlayingView: View {
                             }
                         }
                     }
-                    .frame(width: 310, height: 310)
+                    .frame(width: 295, height: 295)
                     .clipShape(RoundedRectangle(cornerRadius: 24))
                     .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
 
+                    // Título, artista y álbum
                     VStack(spacing: 6) {
                         Text(song.title)
                             .font(.title2.bold())
@@ -63,37 +70,54 @@ struct NowPlayingView: View {
                     }
                     .padding(.horizontal, 24)
 
-                    // Barra de progreso sin saltos al arrastrar
-                    VStack(spacing: 6) {
-                        Slider(
-                            value: Binding(
-                                get: { audioManager.isScrubbing ? dragTime : audioManager.currentTime },
-                                set: { newValue in
-                                    dragTime = newValue
-                                }
-                            ),
-                            in: 0...max(audioManager.duration, 1),
-                            onEditingChanged: { editing in
-                                audioManager.isScrubbing = editing
-                                if editing {
-                                    dragTime = audioManager.currentTime
-                                } else {
-                                    audioManager.seek(to: dragTime)
-                                }
+                    // Barra de progreso personalizada (sin saltos y siempre visible)
+                    VStack(spacing: 8) {
+                        let safeDuration = max(audioManager.duration, 1)
+                        let currentRatio = dragProgress ?? min(max(audioManager.currentTime / safeDuration, 0), 1)
+
+                        GeometryReader { barGeo in
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill(Color.white.opacity(0.22))
+                                    .frame(height: dragProgress != nil ? 8 : 5)
+
+                                Capsule()
+                                    .fill(Color.white)
+                                    .frame(width: barGeo.size.width * currentRatio, height: dragProgress != nil ? 8 : 5)
                             }
-                        )
-                        .tint(.white)
+                            .frame(maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        audioManager.isScrubbing = true
+                                        let ratio = min(max(value.location.x / barGeo.size.width, 0), 1)
+                                        dragProgress = ratio
+                                    }
+                                    .onEnded { value in
+                                        let ratio = min(max(value.location.x / barGeo.size.width, 0), 1)
+                                        let targetTime = ratio * safeDuration
+                                        audioManager.seek(to: targetTime)
+                                        dragProgress = nil
+                                        audioManager.isScrubbing = false
+                                    }
+                            )
+                            .animation(.easeOut(duration: 0.12), value: dragProgress != nil)
+                        }
+                        .frame(height: 24)
 
                         HStack {
-                            Text(formatTime(audioManager.isScrubbing ? dragTime : audioManager.currentTime))
+                            let displayedTime = (dragProgress != nil) ? (dragProgress! * safeDuration) : audioManager.currentTime
+                            Text(formatTime(displayedTime))
                             Spacer()
-                            Text(formatTime(audioManager.duration))
+                            Text("-\(formatTime(max(safeDuration - displayedTime, 0)))")
                         }
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(AppTheme.secondaryText)
                     }
                     .padding(.horizontal, 28)
 
+                    // Controles principales
                     HStack(spacing: 34) {
                         Button {
                             audioManager.isShuffle.toggle()
