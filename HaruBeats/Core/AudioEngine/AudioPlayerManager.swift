@@ -6,6 +6,7 @@ import Combine
 @MainActor
 final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var library: [Song] = []
+    @Published var playbackQueue: [Song] = []
     @Published var currentSong: Song?
     @Published var currentLyrics: [LyricLine] = []
     @Published var isPlaying: Bool = false
@@ -122,6 +123,9 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             loadedSongs.append(song)
         }
         self.library = loadedSongs.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        if playbackQueue.isEmpty {
+            playbackQueue = self.library
+        }
     }
 
     func importFiles(urls: [URL]) async {
@@ -179,7 +183,13 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
     }
 
-    func play(song: Song) {
+    func play(song: Song, inQueue queue: [Song]? = nil) {
+        if let queue, !queue.isEmpty {
+            playbackQueue = queue
+        } else if playbackQueue.isEmpty {
+            playbackQueue = library
+        }
+
         do {
             configureAudioSession()
             player?.stop()
@@ -223,31 +233,35 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     func playNext() {
-        guard !library.isEmpty else { return }
-        if isShuffle, let randomSong = library.randomElement() {
+        let activeQueue = playbackQueue.isEmpty ? library : playbackQueue
+        guard !activeQueue.isEmpty else { return }
+
+        if isShuffle, let randomSong = activeQueue.randomElement() {
             play(song: randomSong)
             return
         }
-        guard let current = currentSong, let idx = library.firstIndex(of: current) else {
-            play(song: library[0])
+        guard let current = currentSong, let idx = activeQueue.firstIndex(of: current) else {
+            play(song: activeQueue[0])
             return
         }
-        let nextIndex = (idx + 1) % library.count
-        play(song: library[nextIndex])
+        let nextIndex = (idx + 1) % activeQueue.count
+        play(song: activeQueue[nextIndex])
     }
 
     func playPrevious() {
-        guard !library.isEmpty else { return }
+        let activeQueue = playbackQueue.isEmpty ? library : playbackQueue
+        guard !activeQueue.isEmpty else { return }
+
         if currentTime > 3 {
             seek(to: 0)
             return
         }
-        guard let current = currentSong, let idx = library.firstIndex(of: current) else {
-            play(song: library[0])
+        guard let current = currentSong, let idx = activeQueue.firstIndex(of: current) else {
+            play(song: activeQueue[0])
             return
         }
-        let prevIndex = (idx - 1 + library.count) % library.count
-        play(song: library[prevIndex])
+        let prevIndex = (idx - 1 + activeQueue.count) % activeQueue.count
+        play(song: activeQueue[prevIndex])
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
