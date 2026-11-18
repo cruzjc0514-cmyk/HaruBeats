@@ -19,9 +19,12 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
     private var player: AVAudioPlayer?
     private var timer: Timer?
 
+    private var documentsDirectory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
     private var musicDirectory: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let folder = docs.appendingPathComponent("HaruBeatsMusic", isDirectory: true)
+        let folder = documentsDirectory.appendingPathComponent("HaruBeatsMusic", isDirectory: true)
         if !FileManager.default.fileExists(atPath: folder.path) {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
@@ -151,7 +154,6 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
     }
 
-    /// Importa recursivamente todos los audios y letras .lrc de una carpeta y devuelve las canciones importadas
     func importFolder(url folderURL: URL) async -> (folderName: String, importedSongs: [Song]) {
         let folderName = folderURL.lastPathComponent
         let accessed = folderURL.startAccessingSecurityScopedResource()
@@ -195,11 +197,65 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
             loadLyrics(for: currentSong)
         }
 
-        // Mantener el orden original de pistas de la carpeta
         let orderedSongs = copiedAudioFileNames.compactMap { fileName in
             library.first(where: { $0.fileURL.lastPathComponent == fileName })
         }
         return (folderName, orderedSongs)
+    }
+
+    /// Guarda un archivo recibido vía Wi-Fi y devuelve la canción si es audio
+    func saveTransferredFile(fileName: String, data: Data) async -> (destination: URL, song: Song?)? {
+        let destination = musicDirectory.appendingPathComponent(fileName)
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try data.write(to: destination, options: .atomic)
+            await loadStoredLibrary()
+            if let currentSong {
+                loadLyrics(for: currentSong)
+            }
+            let matchedSong = library.first(where: { $0.fileURL.lastPathComponent == fileName })
+            return (destination, matchedSong)
+        } catch {
+            print("Error guardando archivo Wi-Fi \(fileName): \(error)")
+            return nil
+        }
+    }
+
+    /// Escanea archivos copiados por cable USB desde iTunes / Dispositivos Apple en Windows
+    func scanUSBSharedFiles() async -> Int {
+        guard let rootFiles = try? FileManager.default.contentsOfDirectory(
+            at: documentsDirectory,
+            includingPropertiesForKeys: nil
+        ) else { return 0 }
+
+        let allowedExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac", "lrc"]
+        var importedCount = 0
+
+        for fileURL in rootFiles {
+            let ext = fileURL.pathExtension.lowercased()
+            guard allowedExtensions.contains(ext) else { continue }
+
+            let destination = musicDirectory.appendingPathComponent(fileURL.lastPathComponent)
+            do {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: fileURL, to: destination)
+                importedCount += 1
+            } catch {
+                print("Error moviendo archivo USB \(fileURL.lastPathComponent): \(error)")
+            }
+        }
+
+        if importedCount > 0 {
+            await loadStoredLibrary()
+            if let currentSong {
+                loadLyrics(for: currentSong)
+            }
+        }
+        return importedCount
     }
 
     func loadLyrics(for song: Song) {
