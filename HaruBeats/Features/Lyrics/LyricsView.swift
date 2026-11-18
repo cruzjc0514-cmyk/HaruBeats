@@ -26,10 +26,12 @@ struct LyricsView: View {
 
     var body: some View {
         Group {
-            if audioManager.currentLyrics.isEmpty {
-                emptyLyricsView
-            } else {
+            if !audioManager.currentLyrics.isEmpty {
                 syncedLyricsView
+            } else if let plainText = audioManager.plainLyricsText, !plainText.isEmpty {
+                plainLyricsView(text: plainText)
+            } else {
+                emptyLyricsView
             }
         }
         .fileImporter(
@@ -53,11 +55,11 @@ struct LyricsView: View {
                 .font(.system(size: 40))
                 .foregroundStyle(effectiveAccent)
 
-            Text("Sin letras sincronizadas")
+            Text("Sin letras disponibles")
                 .font(.headline)
                 .foregroundStyle(.white)
 
-            Text("Coloca un archivo .lrc con el mismo nombre junto a tu canción o selecciónalo manualmente.")
+            Text("Coloca un archivo .lrc o .txt con el mismo nombre junto a tu canción o selecciónalo manualmente.")
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -77,6 +79,48 @@ struct LyricsView: View {
             .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func plainLyricsView(text: String) -> some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Letra sin sincronizar")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AppTheme.secondaryText)
+                Spacer()
+                Button("A-") {
+                    audioManager.lyricsFontScale = max(0.85, audioManager.lyricsFontScale - 0.15)
+                }
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.white.opacity(0.14))
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
+
+                Button("A+") {
+                    audioManager.lyricsFontScale = min(1.45, audioManager.lyricsFontScale + 0.15)
+                }
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.white.opacity(0.14))
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 4)
+
+            ScrollView(showsIndicators: false) {
+                Text(text)
+                    .font(.system(size: 19 * audioManager.lyricsFontScale, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineSpacing(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
+            }
+        }
     }
 
     private var syncedLyricsView: some View {

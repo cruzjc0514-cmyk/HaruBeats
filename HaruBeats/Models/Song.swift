@@ -7,20 +7,30 @@ struct Song: Identifiable, Hashable {
     let title: String
     let artist: String
     let album: String
+    let albumArtist: String
+    let trackNumber: Int
+    let discNumber: Int
+    let year: String?
+    let genre: String?
+    let embeddedLyrics: String?
     let duration: TimeInterval
     let fileURL: URL
-    let artworkData: Data?
+    let artworkCacheKey: String?
     let codec: String
     let sampleRate: Double
     let bitDepth: Int?
     let replayGainDB: Double?
 
-    var artworkImage: UIImage? {
-        guard let artworkData else { return nil }
-        return UIImage(data: artworkData)
+    /// Miniatura rápida en caché para listas y cuadrículas
+    var thumbnailImage: UIImage? {
+        LibraryCacheManager.shared.thumbnailImage(forKey: artworkCacheKey)
     }
 
-    /// Etiqueta audiófila formateada (ej. "FLAC · 24-bit · 96 kHz" o "M4A · 44.1 kHz")
+    /// Portada completa en caché para el reproductor ampliado y pantalla bloqueada
+    var artworkImage: UIImage? {
+        LibraryCacheManager.shared.fullImage(forKey: artworkCacheKey)
+    }
+
     var audioQualityBadge: String {
         var parts: [String] = [codec]
         if let bitDepth, bitDepth > 0 {
@@ -41,6 +51,51 @@ struct Song: Identifiable, Hashable {
         (bitDepth ?? 16) >= 24 || sampleRate > 48000
     }
 
+    func toCachedRecord(fileSize: Int64, modTime: TimeInterval) -> CachedSongRecord {
+        CachedSongRecord(
+            fileName: fileURL.lastPathComponent,
+            fileSize: fileSize,
+            modificationTimestamp: modTime,
+            title: title,
+            artist: artist,
+            album: album,
+            albumArtist: albumArtist,
+            trackNumber: trackNumber,
+            discNumber: discNumber,
+            year: year,
+            genre: genre,
+            embeddedLyrics: embeddedLyrics,
+            duration: duration,
+            codec: codec,
+            sampleRate: sampleRate,
+            bitDepth: bitDepth,
+            replayGainDB: replayGainDB,
+            artworkCacheKey: artworkCacheKey
+        )
+    }
+
+    static func fromCached(_ record: CachedSongRecord, fileURL: URL) -> Song {
+        Song(
+            id: UUID(),
+            title: record.title,
+            artist: record.artist,
+            album: record.album,
+            albumArtist: record.albumArtist,
+            trackNumber: record.trackNumber,
+            discNumber: record.discNumber,
+            year: record.year,
+            genre: record.genre,
+            embeddedLyrics: record.embeddedLyrics,
+            duration: record.duration,
+            fileURL: fileURL,
+            artworkCacheKey: record.artworkCacheKey,
+            codec: record.codec,
+            sampleRate: record.sampleRate,
+            bitDepth: record.bitDepth,
+            replayGainDB: record.replayGainDB
+        )
+    }
+
     static func from(url: URL) async -> Song {
         let fallbackTitle = url.deletingPathExtension().lastPathComponent
         let ext = url.pathExtension.uppercased()
@@ -49,6 +104,12 @@ struct Song: Identifiable, Hashable {
         var title = fallbackTitle
         var artist = "Artista desconocido"
         var album = "Álbum desconocido"
+        var albumArtist: String? = nil
+        var trackNumber = 0
+        var discNumber = 1
+        var year: String? = nil
+        var genre: String? = nil
+        var embeddedLyrics: String? = nil
         var artworkData: Data? = nil
         var durationSeconds: TimeInterval = 0
         var sampleRate: Double = 44100
@@ -71,6 +132,12 @@ struct Song: Identifiable, Hashable {
             if let t = flacMeta.title { title = t }
             if let a = flacMeta.artist { artist = a }
             if let al = flacMeta.album { album = al }
+            if let aa = flacMeta.albumArtist { albumArtist = aa }
+            if let tn = flacMeta.trackNumber { trackNumber = tn }
+            if let dn = flacMeta.discNumber { discNumber = dn }
+            if let yr = flacMeta.year { year = yr }
+            if let gn = flacMeta.genre { genre = gn }
+            if let lyr = flacMeta.embeddedLyrics { embeddedLyrics = lyr }
             if let art = flacMeta.artworkData { artworkData = art }
             if let sr = flacMeta.sampleRate, sr > 0 { sampleRate = sr }
             if let bd = flacMeta.bitDepth { bitDepth = bd }
@@ -92,6 +159,10 @@ struct Song: Identifiable, Hashable {
                         if let val = try? await item.load(.stringValue), !val.isEmpty { artist = val }
                     case .commonKeyAlbumName:
                         if let val = try? await item.load(.stringValue), !val.isEmpty { album = val }
+                    case .commonKeyCreator:
+                        if let val = try? await item.load(.stringValue), !val.isEmpty { albumArtist = val }
+                    case .commonKeyType:
+                        if let val = try? await item.load(.stringValue), !val.isEmpty { genre = val }
                     case .commonKeyArtwork:
                         if let data = try? await item.load(.dataValue) { artworkData = data }
                     default:
@@ -99,6 +170,19 @@ struct Song: Identifiable, Hashable {
                     }
                 }
             }
+
+            if let lyricsText = try? await asset.load(.lyrics), !lyricsText.isEmpty {
+                embeddedLyrics = lyricsText
+            }
+        }
+
+        let resolvedAlbumArtist = (albumArtist?.isEmpty == false) ? albumArtist! : artist
+        var cacheKey: String? = nil
+        if let artworkData {
+            let safeAlbumKey = "\(resolvedAlbumArtist)_\(album)_\(url.lastPathComponent)"
+                .replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "_", options: .regularExpression)
+            cacheKey = String(safeAlbumKey.prefix(80))
+            LibraryCacheManager.shared.storeArtwork(data: artworkData, forKey: cacheKey!)
         }
 
         return Song(
@@ -106,9 +190,15 @@ struct Song: Identifiable, Hashable {
             title: title,
             artist: artist,
             album: album,
+            albumArtist: resolvedAlbumArtist,
+            trackNumber: trackNumber,
+            discNumber: discNumber,
+            year: year,
+            genre: genre,
+            embeddedLyrics: embeddedLyrics,
             duration: durationSeconds,
             fileURL: url,
-            artworkData: artworkData,
+            artworkCacheKey: cacheKey,
             codec: codecName,
             sampleRate: sampleRate,
             bitDepth: bitDepth,

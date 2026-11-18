@@ -10,12 +10,14 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var playbackQueue: [Song] = []
     @Published var currentSong: Song?
     @Published var currentLyrics: [LyricLine] = []
+    @Published var plainLyricsText: String? = nil
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
     @Published var isShuffle: Bool = false
     @Published var isRepeatOne: Bool = false
     @Published var isScrubbing: Bool = false
+    @Published var isScanningLibrary: Bool = false
 
     // Color ambiental dinámico extraído de la portada
     @Published var dynamicArtworkColor: Color? = nil
@@ -27,7 +29,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var selectedPreset: EqualizerPreset = .flat
     @Published var bandGains: [Float] = [0, 0, 0, 0, 0]
 
-    // ReplayGain (normalización de volumen por pista)
+    // ReplayGain
     @Published var isReplayGainEnabled: Bool = true {
         didSet {
             UserDefaults.standard.set(isReplayGainEnabled, forKey: "hb_replaygain_enabled")
@@ -39,13 +41,13 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var sleepTimerRemaining: TimeInterval? = nil
     @Published var stopAfterCurrentSong: Bool = false
 
-    // Sincronización LRC en vivo (desfase en segundos) y tamaño de fuente
+    // Sincronización LRC en vivo y escala de fuente
     @Published var lyricsOffset: TimeInterval = 0
     @Published var lyricsFontScale: Double = 1.0 {
         didSet { UserDefaults.standard.set(lyricsFontScale, forKey: "hb_lyrics_scale") }
     }
 
-    // Crossfade entre pistas (0 = Gapless puro sin pausas, 2, 4, 6 segundos)
+    // Crossfade entre pistas
     @Published var crossfadeDuration: Double = 0 {
         didSet { UserDefaults.standard.set(crossfadeDuration, forKey: "hb_crossfade_duration") }
     }
@@ -70,7 +72,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     private var fadeInRemaining: Double = 0
     private var targetLinearGain: Float = 1.0
 
-    // Estado para transición Gapless (sin pausas)
+    // Gapless
     private var preScheduledNextSong: Song? = nil
     private var preScheduledNextFile: AVAudioFile? = nil
     private var didPreScheduleGapless: Bool = false
@@ -138,7 +140,18 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         engine.prepare()
     }
 
-    // MARK: - Interrupciones del sistema (Llamadas, AirPods, Hardware)
+    func hasLyrics(for song: Song) -> Bool {
+        if let embedded = song.embeddedLyrics, !embedded.isEmpty {
+            return true
+        }
+        let baseName = song.fileURL.deletingPathExtension().lastPathComponent
+        let lrcURL = musicDirectory.appendingPathComponent("\(baseName).lrc")
+        let txtURL = musicDirectory.appendingPathComponent("\(baseName).txt")
+        return FileManager.default.fileExists(atPath: lrcURL.path)
+            || FileManager.default.fileExists(atPath: txtURL.path)
+    }
+
+    // MARK: - Interrupciones del sistema
 
     private func observeSystemAudioNotifications() {
         let nc = NotificationCenter.default
@@ -278,7 +291,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         updateNowPlayingInfo()
     }
 
-    // MARK: - Preferencias, Estadísticas, ReplayGain y Desfase LRC
+    // MARK: - Preferencias, Estadísticas y ReplayGain
 
     private func loadUserPreferencesAndStats() {
         if let scale = UserDefaults.standard.object(forKey: "hb_lyrics_scale") as? Double, scale >= 0.8 {
@@ -302,7 +315,6 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             }
             return
         }
-        // Limitar ganancia entre -12 dB y +6 dB para proteger contra saturación
         let clampedDB = min(max(db, -12.0), 6.0)
         targetLinearGain = Float(pow(10.0, clampedDB / 20.0))
         if fadeInRemaining <= 0 {
@@ -494,22 +506,51 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
-    // MARK: - Biblioteca, Cola e Importación
+    // MARK: - Escaneo Incremental de Biblioteca y Limpieza de Huérfanos
 
     func loadStoredLibrary() async {
+        isScanningLibrary = true
+        defer { isScanningLibrary = false }
+
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: musicDirectory,
-            includingPropertiesForKeys: nil
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]
         ) else { return }
 
         let supportedExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac"]
         let audioFiles = files.filter { supportedExtensions.contains($0.pathExtension.lowercased()) }
+        let existingNames = Set(audioFiles.map { $0.lastPathComponent })
 
+        let existingIndex = LibraryCacheManager.shared.loadIndex()
+        var updatedRecords: [CachedSongRecord] = []
         var loadedSongs: [Song] = []
-        for fileURL in audioFiles {
-            let song = await Song.from(url: fileURL)
-            loadedSongs.append(song)
+
+        // Limpiar portadas en caché de archivos que ya no existen en disco
+        for (cachedName, cachedRecord) in existingIndex where !existingNames.contains(cachedName) {
+            LibraryCacheManager.shared.removeArtwork(forKey: cachedRecord.artworkCacheKey)
         }
+
+        for fileURL in audioFiles {
+            let fileName = fileURL.lastPathComponent
+            let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let fileSize = Int64(resourceValues?.fileSize ?? 0)
+            let modTime = resourceValues?.contentModificationDate?.timeIntervalSince1970 ?? 0
+
+            if let cached = existingIndex[fileName],
+               cached.fileSize == fileSize,
+               abs(cached.modificationTimestamp - modTime) < 1.0 {
+                // Reutilizar metadatos instantáneamente desde caché
+                loadedSongs.append(Song.fromCached(cached, fileURL: fileURL))
+                updatedRecords.append(cached)
+            } else {
+                // Archivo nuevo o modificado: analizar metadatos y guardar en caché
+                let song = await Song.from(url: fileURL)
+                loadedSongs.append(song)
+                updatedRecords.append(song.toCachedRecord(fileSize: fileSize, modTime: modTime))
+            }
+        }
+
+        LibraryCacheManager.shared.saveIndex(updatedRecords)
         self.library = loadedSongs.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         if playbackQueue.isEmpty {
             playbackQueue = self.library
@@ -532,16 +573,19 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             currentTime = 0
             duration = 0
             currentLyrics = []
+            plainLyricsText = nil
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             savePlaybackSession(force: true)
         }
 
+        LibraryCacheManager.shared.removeArtwork(forKey: song.artworkCacheKey)
         library.removeAll { $0.fileURL == song.fileURL }
         playbackQueue.removeAll { $0.fileURL == song.fileURL }
 
         try? FileManager.default.removeItem(at: song.fileURL)
-        let lrcURL = musicDirectory.appendingPathComponent("\(song.fileURL.deletingPathExtension().lastPathComponent).lrc")
-        try? FileManager.default.removeItem(at: lrcURL)
+        let baseName = song.fileURL.deletingPathExtension().lastPathComponent
+        try? FileManager.default.removeItem(at: musicDirectory.appendingPathComponent("\(baseName).lrc"))
+        try? FileManager.default.removeItem(at: musicDirectory.appendingPathComponent("\(baseName).txt"))
     }
 
     func enqueueNext(_ song: Song) {
@@ -599,7 +643,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             if accessed { folderURL.stopAccessingSecurityScopedResource() }
         }
 
-        let allowedExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac", "lrc"]
+        let allowedExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac", "lrc", "txt"]
         let audioExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac"]
         var copiedAudioFileNames: [String] = []
 
@@ -666,7 +710,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             includingPropertiesForKeys: nil
         ) else { return 0 }
 
-        let allowedExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac", "lrc"]
+        let allowedExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac", "lrc", "txt"]
         var importedCount = 0
 
         for fileURL in rootFiles {
@@ -694,16 +738,41 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         return importedCount
     }
 
+    // MARK: - Carga de Letras (.lrc externo, .txt externo o letras incrustadas)
+
     func loadLyrics(for song: Song) {
         let baseName = song.fileURL.deletingPathExtension().lastPathComponent
         let lrcURL = musicDirectory.appendingPathComponent("\(baseName).lrc")
+        let txtURL = musicDirectory.appendingPathComponent("\(baseName).txt")
         lyricsOffset = UserDefaults.standard.double(forKey: "hb_lrc_offset_\(song.fileURL.lastPathComponent)")
+
+        currentLyrics = []
+        plainLyricsText = nil
 
         if FileManager.default.fileExists(atPath: lrcURL.path),
            let content = try? String(contentsOf: lrcURL, encoding: .utf8) {
-            currentLyrics = LRCParser.parse(content: content)
-        } else {
-            currentLyrics = []
+            let parsed = LRCParser.parse(content: content)
+            if !parsed.isEmpty {
+                currentLyrics = parsed
+            } else {
+                plainLyricsText = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: txtURL.path),
+           let content = try? String(contentsOf: txtURL, encoding: .utf8) {
+            plainLyricsText = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return
+        }
+
+        if let embedded = song.embeddedLyrics, !embedded.isEmpty {
+            let parsed = LRCParser.parse(content: embedded)
+            if !parsed.isEmpty {
+                currentLyrics = parsed
+            } else {
+                plainLyricsText = embedded.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
     }
 
@@ -727,7 +796,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Reproducción con Gapless real, Crossfade, ReplayGain y Barra Fluida
+    // MARK: - Reproducción con Gapless, Crossfade, ReplayGain y Barra Fluida
 
     func play(song: Song, inQueue queue: [Song]? = nil) {
         if let queue, !queue.isEmpty {
@@ -806,7 +875,6 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         return activeQueue[nextIndex]
     }
 
-    /// Pre-programa el siguiente archivo en AVAudioPlayerNode cuando falta poco para acabar (Gapless sample-accurate)
     private func tryPreScheduleGaplessNext(generation: UInt64) {
         guard crossfadeDuration == 0, !didPreScheduleGapless, let nextSong = nextSequentialSong() else { return }
         guard let nextFile = try? AVAudioFile(forReading: nextSong.fileURL),
@@ -934,7 +1002,6 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         fadeInRemaining = 0
         seekFrameOffset = targetFrame
         currentTime = clampedTime
-        // Evita cualquier micro-rebote visual de la barra mientras el buffer reinicia
         seekHoldUntil = Date().addingTimeInterval(0.30)
 
         scheduleSegment(fromFrame: targetFrame, generation: gen)
@@ -990,7 +1057,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
 
     private func startTimer() {
         stopTimer()
-        let tickInterval = 0.05 // 20 FPS para barra de progreso y letras ultra fluidas
+        let tickInterval = 0.05
         timer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isPlaying, !self.isScrubbing else { return }
