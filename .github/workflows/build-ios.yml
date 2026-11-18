@@ -1,0 +1,43 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Instalar XcodeGen
+        run: brew install xcodegen
+
+      - name: Generar proyecto Xcode
+        run: xcodegen generate
+
+      - name: Compilar aplicación sin firma
+        run: |
+          xcodebuild -project HaruBeats.xcodeproj \
+            -scheme HaruBeats \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Empaquetar archivo .ipa
+        run: |
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/HaruBeats.app Payload/
+          zip -r HaruBeats.ipa Payload
+
+      - name: Subir .ipa como artefacto descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: HaruBeats-IPA
+          path: HaruBeats.ipa
