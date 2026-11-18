@@ -27,7 +27,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var sleepTimerRemaining: TimeInterval? = nil
     @Published var stopAfterCurrentSong: Bool = false
 
-    // Motor AVAudioEngine
+    // Motor AVAudioEngine con grafo fijo (nunca se desconecta en caliente)
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let eqNode = AVAudioUnitEQ(numberOfBands: 5)
@@ -36,9 +36,9 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     private var audioFile: AVAudioFile?
     private var seekFrameOffset: AVAudioFramePosition = 0
     private var totalFrames: AVAudioFramePosition = 0
-    private var sampleRate: Double = 44100
-    private var playbackSessionID = UUID()
-    private var lastToggleTimestamp: Date = .distantPast
+    private var fileSampleRate: Double = 44100
+    private var playbackGeneration: UInt64 = 0
+    private var lastCommandTime: Date = .distantPast
 
     private var timer: Timer?
     private var sleepTimer: Timer?
@@ -79,8 +79,10 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             band.bypass = false
         }
 
+        // Conexión fija: format nil permite que AVAudioEngine adapte cualquier sampleRate sin desconectar nodos
         engine.connect(playerNode, to: eqNode, format: nil)
         engine.connect(eqNode, to: engine.mainMixerNode, format: nil)
+        engine.prepare()
     }
 
     func applyPreset(_ preset: EqualizerPreset) {
@@ -216,7 +218,10 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func updateNowPlayingInfo() {
-        guard let song = currentSong else { return }
+        guard let song = currentSong else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: song.title,
             MPMediaItemPropertyArtist: song.artist,
@@ -257,21 +262,31 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     func deleteSong(_ song: Song) async {
+        // 1. Detener el motor de forma limpia ANTES de borrar el archivo del disco
+        playbackGeneration &+= 1
+        stopTimer()
+
         if currentSong?.fileURL == song.fileURL {
-            playbackSessionID = UUID()
-            playerNode.stop()
-            stopTimer()
+            if playerNode.isPlaying {
+                playerNode.stop()
+            }
+            audioFile = nil
             isPlaying = false
             currentSong = nil
-            audioFile = nil
+            currentTime = 0
+            duration = 0
+            currentLyrics = []
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         }
+
+        // 2. Eliminar de la cola y listas en memoria primero para que SwiftUI no renderice un archivo borrado
+        library.removeAll { $0.fileURL == song.fileURL }
+        playbackQueue.removeAll { $0.fileURL == song.fileURL }
+
+        // 3. Borrar archivos físicos
         try? FileManager.default.removeItem(at: song.fileURL)
         let lrcURL = musicDirectory.appendingPathComponent("\(song.fileURL.deletingPathExtension().lastPathComponent).lrc")
         try? FileManager.default.removeItem(at: lrcURL)
-
-        playbackQueue.removeAll { $0.fileURL == song.fileURL }
-        await loadStoredLibrary()
     }
 
     func enqueueNext(_ song: Song) {
@@ -443,7 +458,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Reproducción con AVAudioEngine (protegida contra toques rápidos)
+    // MARK: - Reproducción segura sin reconexión de nodos
 
     func play(song: Song, inQueue queue: [Song]? = nil) {
         if let queue, !queue.isEmpty {
@@ -454,34 +469,34 @@ final class AudioPlayerManager: NSObject, ObservableObject {
 
         guard FileManager.default.fileExists(atPath: song.fileURL.path) else { return }
 
+        // Incrementar generación para invalidar cualquier callback de una pista anterior
+        playbackGeneration &+= 1
+        let gen = playbackGeneration
+
         do {
             configureAudioSession()
             let file = try AVAudioFile(forReading: song.fileURL)
             let format = file.processingFormat
-            guard format.sampleRate > 0, format.channelCount > 0 else { return }
+            guard format.sampleRate > 0, format.channelCount > 0, file.length > 0 else { return }
 
-            // Invalidar cualquier sesión previa antes de detener el nodo
-            playbackSessionID = UUID()
+            // Detener reproducción actual sin desconectar nodos del grafo
             playerNode.stop()
+            playerNode.reset()
 
             audioFile = file
-            sampleRate = format.sampleRate
+            fileSampleRate = format.sampleRate
             totalFrames = file.length
-            duration = Double(totalFrames) / sampleRate
+            duration = Double(totalFrames) / fileSampleRate
             seekFrameOffset = 0
             currentSong = song
             currentTime = 0
 
-            engine.disconnectNodeOutput(playerNode)
-            engine.disconnectNodeOutput(eqNode)
-            engine.connect(playerNode, to: eqNode, format: format)
-            engine.connect(eqNode, to: engine.mainMixerNode, format: format)
-
             if !engine.isRunning {
+                engine.prepare()
                 try engine.start()
             }
 
-            scheduleSegment(fromFrame: 0)
+            scheduleSegment(fromFrame: 0, generation: gen)
             playerNode.play()
 
             isPlaying = true
@@ -489,26 +504,24 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             updateNowPlayingInfo()
             startTimer()
         } catch {
-            print("Error reproduciendo con AVAudioEngine \(song.title): \(error)")
+            print("Error reproduciendo \(song.title): \(error)")
         }
     }
 
-    private func scheduleSegment(fromFrame startFrame: AVAudioFramePosition) {
+    private func scheduleSegment(fromFrame startFrame: AVAudioFramePosition, generation: UInt64) {
         guard let file = audioFile else { return }
         let framesRemaining = AVAudioFrameCount(max(totalFrames - startFrame, 0))
         guard framesRemaining > 0 else { return }
-
-        let sessionID = UUID()
-        playbackSessionID = sessionID
 
         playerNode.scheduleSegment(
             file,
             startingFrame: startFrame,
             frameCount: framesRemaining,
-            at: nil
-        ) { [weak self] in
+            at: nil,
+            completionCallbackType: .dataPlayedBack
+        ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.playbackSessionID == sessionID, self.isPlaying else { return }
+                guard let self, self.playbackGeneration == generation, self.isPlaying else { return }
                 self.handleTrackCompleted()
             }
         }
@@ -532,10 +545,9 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     func togglePlayPause() {
-        // Evitar colisiones de AVAudioEngine si se presiona el botón repetidamente muy rápido
         let now = Date()
-        guard now.timeIntervalSince(lastToggleTimestamp) > 0.15 else { return }
-        lastToggleTimestamp = now
+        guard now.timeIntervalSince(lastCommandTime) > 0.12 else { return }
+        lastCommandTime = now
 
         guard audioFile != nil else {
             if let first = library.first {
@@ -561,45 +573,54 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     func seek(to time: TimeInterval) {
-        guard audioFile != nil else { return }
+        guard let file = audioFile, duration > 0 else { return }
         let clampedTime = min(max(time, 0), duration)
-        let targetFrame = AVAudioFramePosition(clampedTime * sampleRate)
+        let targetFrame = min(max(AVAudioFramePosition(clampedTime * fileSampleRate), 0), totalFrames - 1)
         let wasPlaying = isPlaying
 
-        playbackSessionID = UUID()
+        playbackGeneration &+= 1
+        let gen = playbackGeneration
+
         playerNode.stop()
+        playerNode.reset()
         seekFrameOffset = targetFrame
         currentTime = clampedTime
 
-        if targetFrame < totalFrames {
-            scheduleSegment(fromFrame: targetFrame)
-            if wasPlaying {
-                if !engine.isRunning { try? engine.start() }
-                playerNode.play()
-            }
+        scheduleSegment(fromFrame: targetFrame, generation: gen)
+        if wasPlaying {
+            if !engine.isRunning { try? engine.start() }
+            playerNode.play()
         }
         updateNowPlayingInfo()
     }
 
     func playNext() {
-        let activeQueue = playbackQueue.isEmpty ? library : playbackQueue
+        let now = Date()
+        guard now.timeIntervalSince(lastCommandTime) > 0.12 else { return }
+        lastCommandTime = now
+
+        let activeQueue = playbackQueue.filter { FileManager.default.fileExists(atPath: $0.fileURL.path) }
         guard !activeQueue.isEmpty else { return }
 
         if isShuffle, let randomSong = activeQueue.randomElement() {
-            play(song: randomSong)
+            play(song: randomSong, inQueue: activeQueue)
             return
         }
         guard let current = currentSong,
               let idx = activeQueue.firstIndex(where: { $0.fileURL == current.fileURL }) else {
-            play(song: activeQueue[0])
+            play(song: activeQueue[0], inQueue: activeQueue)
             return
         }
         let nextIndex = (idx + 1) % activeQueue.count
-        play(song: activeQueue[nextIndex])
+        play(song: activeQueue[nextIndex], inQueue: activeQueue)
     }
 
     func playPrevious() {
-        let activeQueue = playbackQueue.isEmpty ? library : playbackQueue
+        let now = Date()
+        guard now.timeIntervalSince(lastCommandTime) > 0.12 else { return }
+        lastCommandTime = now
+
+        let activeQueue = playbackQueue.filter { FileManager.default.fileExists(atPath: $0.fileURL.path) }
         guard !activeQueue.isEmpty else { return }
 
         if currentTime > 3 {
@@ -608,24 +629,28 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         }
         guard let current = currentSong,
               let idx = activeQueue.firstIndex(where: { $0.fileURL == current.fileURL }) else {
-            play(song: activeQueue[0])
+            play(song: activeQueue[0], inQueue: activeQueue)
             return
         }
         let prevIndex = (idx - 1 + activeQueue.count) % activeQueue.count
-        play(song: activeQueue[prevIndex])
+        play(song: activeQueue[prevIndex], inQueue: activeQueue)
     }
 
     private func startTimer() {
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, !self.isScrubbing,
+                guard let self, self.isPlaying, !self.isScrubbing,
                       let nodeTime = self.playerNode.lastRenderTime,
+                      nodeTime.isSampleTimeValid,
                       let playerTime = self.playerNode.playerTime(forNodeTime: nodeTime) else { return }
 
-                let playedSeconds = Double(playerTime.sampleTime) / self.sampleRate
-                let offsetSeconds = Double(self.seekFrameOffset) / self.sampleRate
-                self.currentTime = min(max(offsetSeconds + playedSeconds, 0), self.duration)
+                let playedSeconds = Double(playerTime.sampleTime) / playerTime.sampleRate
+                let offsetSeconds = Double(self.seekFrameOffset) / self.fileSampleRate
+                let computed = offsetSeconds + playedSeconds
+                if computed >= 0 && computed <= self.duration {
+                    self.currentTime = computed
+                }
             }
         }
     }

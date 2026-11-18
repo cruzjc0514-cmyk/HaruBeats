@@ -119,44 +119,35 @@ struct NowPlayingView: View {
                         Spacer()
                     }
 
-                    // Barra de progreso táctil
-                    VStack(spacing: 8) {
+                    // Barra de progreso fluida a 120 Hz
+                    VStack(spacing: 6) {
                         let safeDuration = max(audioManager.duration, 1)
-                        let currentRatio = dragProgress ?? min(max(audioManager.currentTime / safeDuration, 0), 1)
 
-                        GeometryReader { barGeo in
-                            ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.white.opacity(0.22))
-                                    .frame(height: dragProgress != nil ? 8 : 5)
-
-                                Capsule()
-                                    .fill(Color.white)
-                                    .frame(width: barGeo.size.width * currentRatio, height: dragProgress != nil ? 8 : 5)
+                        Slider(
+                            value: Binding(
+                                get: {
+                                    dragProgress ?? min(max(audioManager.currentTime, 0), safeDuration)
+                                },
+                                set: { newValue in
+                                    audioManager.isScrubbing = true
+                                    dragProgress = newValue
+                                }
+                            ),
+                            in: 0...safeDuration,
+                            onEditingChanged: { editing in
+                                if !editing {
+                                    if let target = dragProgress {
+                                        audioManager.seek(to: target)
+                                    }
+                                    dragProgress = nil
+                                    audioManager.isScrubbing = false
+                                }
                             }
-                            .frame(maxHeight: .infinity)
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        audioManager.isScrubbing = true
-                                        let ratio = min(max(value.location.x / barGeo.size.width, 0), 1)
-                                        dragProgress = ratio
-                                    }
-                                    .onEnded { value in
-                                        let ratio = min(max(value.location.x / barGeo.size.width, 0), 1)
-                                        let targetTime = ratio * safeDuration
-                                        audioManager.seek(to: targetTime)
-                                        dragProgress = nil
-                                        audioManager.isScrubbing = false
-                                    }
-                            )
-                            .animation(.easeOut(duration: 0.12), value: dragProgress != nil)
-                        }
-                        .frame(height: 24)
+                        )
+                        .tint(.white)
 
                         HStack {
-                            let displayedTime = (dragProgress != nil) ? (dragProgress! * safeDuration) : audioManager.currentTime
+                            let displayedTime = dragProgress ?? audioManager.currentTime
                             Text(formatTime(displayedTime))
                             Spacer()
                             Text("-\(formatTime(max(safeDuration - displayedTime, 0)))")
