@@ -199,7 +199,7 @@ final class WiFiTransferServer: ObservableObject {
     }
 
     // Interfaz web embebida para abrir desde Chrome/Edge en Windows 11
-    private static let webPortalHTML = """
+    private nonisolated static let webPortalHTML = """
     <!DOCTYPE html>
     <html lang="es">
     <head>

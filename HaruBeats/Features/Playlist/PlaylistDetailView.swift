@@ -28,160 +28,188 @@ struct PlaylistDetailView: View {
     var body: some View {
         Group {
             if let playlist {
-                List {
-                    Section {
-                        HStack(spacing: 14) {
-                            Button {
-                                guard let first = songs.first else { return }
-                                audioManager.isShuffle = false
-                                audioManager.play(song: first, inQueue: songs)
-                            } label: {
-                                Label("Reproducir", systemImage: "play.fill")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background(accentColor)
-                                    .foregroundStyle(.white)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(songs.isEmpty)
+                playlistContent(for: playlist)
+            }
+        }
+    }
 
-                            Button {
-                                guard let random = songs.randomElement() else { return }
-                                audioManager.isShuffle = true
-                                audioManager.play(song: random, inQueue: songs)
-                            } label: {
-                                Label("Aleatorio", systemImage: "shuffle")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background(AppTheme.elevatedBackground)
-                                    .foregroundStyle(.white)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(songs.isEmpty)
-                        }
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+    @ViewBuilder
+    private func playlistContent(for playlist: Playlist) -> some View {
+        List {
+            actionHeaderSection
+            songsListSection(for: playlist)
+        }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
+        .navigationTitle(playlist.name)
+        .environment(\.editMode, $editMode)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showAddSongsSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+
+                Menu {
+                    Button {
+                        editedName = playlist.name
+                        showRenameAlert = true
+                    } label: {
+                        Label("Renombrar playlist", systemImage: "pencil")
                     }
 
-                    Section(header: Text("\(songs.count) canciones").foregroundStyle(AppTheme.secondaryText)) {
-                        ForEach(songs) { song in
-                            HStack(spacing: 12) {
-                                Group {
-                                    if let img = song.artworkImage {
-                                        Image(uiImage: img)
-                                            .resizable()
-                                            .scaledToFill()
-                                    } else {
-                                        ZStack {
-                                            AppTheme.elevatedBackground
-                                            Image(systemName: "music.note")
-                                                .foregroundStyle(accentColor)
-                                        }
-                                    }
-                                }
-                                .frame(width: 44, height: 44)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Button {
+                        editMode = (editMode == .active) ? .inactive : .active
+                    } label: {
+                        Label(editMode == .active ? "Listo" : "Reordenar canciones", systemImage: "arrow.up.arrow.down")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+        .alert("Renombrar playlist", isPresented: $showRenameAlert) {
+            TextField("Nombre", text: $editedName)
+            Button("Guardar") {
+                playlistManager.renamePlaylist(id: playlist.id, newName: editedName)
+            }
+            Button("Cancelar", role: .cancel) {}
+        }
+        .sheet(isPresented: $showAddSongsSheet) {
+            AddSongsToPlaylistSheet(playlistID: playlist.id)
+        }
+        .sheet(item: $songToAddToPlaylist) { song in
+            PickPlaylistForSongSheet(song: song)
+        }
+    }
 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(song.title)
-                                        .font(.body.weight(.medium))
-                                        .foregroundStyle(audioManager.currentSong?.fileURL == song.fileURL ? accentColor : .white)
-                                        .lineLimit(1)
-                                    Text(song.artist)
-                                        .font(.caption)
-                                        .foregroundStyle(AppTheme.secondaryText)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                audioManager.play(song: song, inQueue: songs)
-                            }
-                            .contextMenu {
-                                Button {
-                                    audioManager.play(song: song, inQueue: songs)
-                                } label: {
-                                    Label("Reproducir ahora", systemImage: "play.fill")
-                                }
+    private var actionHeaderSection: some View {
+        Section {
+            HStack(spacing: 14) {
+                Button {
+                    guard let first = songs.first else { return }
+                    audioManager.isShuffle = false
+                    audioManager.play(song: first, inQueue: songs)
+                } label: {
+                    Label("Reproducir", systemImage: "play.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(accentColor)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(songs.isEmpty)
 
-                                Button {
-                                    audioManager.enqueueNext(song)
-                                } label: {
-                                    Label("Reproducir a continuación", systemImage: "text.insert")
-                                }
+                Button {
+                    guard let random = songs.randomElement() else { return }
+                    audioManager.isShuffle = true
+                    audioManager.play(song: random, inQueue: songs)
+                } label: {
+                    Label("Aleatorio", systemImage: "shuffle")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(AppTheme.elevatedBackground)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(songs.isEmpty)
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+        }
+    }
 
-                                Button {
-                                    songToAddToPlaylist = song
-                                } label: {
-                                    Label("Agregar a otra playlist", systemImage: "text.badge.plus")
-                                }
+    private func songsListSection(for playlist: Playlist) -> some View {
+        Section(header: Text("\(songs.count) canciones").foregroundStyle(AppTheme.secondaryText)) {
+            ForEach(songs) { song in
+                PlaylistSongRow(
+                    song: song,
+                    isCurrent: audioManager.currentSong?.fileURL == song.fileURL,
+                    accentColor: accentColor,
+                    onTap: {
+                        audioManager.play(song: song, inQueue: songs)
+                    },
+                    onPlayNext: {
+                        audioManager.enqueueNext(song)
+                    },
+                    onAddToOtherPlaylist: {
+                        songToAddToPlaylist = song
+                    },
+                    onRemove: {
+                        playlistManager.removeSongByFileName(song.fileURL.lastPathComponent, from: playlist.id)
+                    }
+                )
+                .listRowBackground(AppTheme.cardBackground)
+            }
+            .onDelete { offsets in
+                playlistManager.removeSongs(at: offsets, from: playlist.id)
+            }
+            .onMove { source, destination in
+                playlistManager.moveSongs(from: source, to: destination, in: playlist.id)
+            }
+        }
+    }
+}
 
-                                Divider()
+private struct PlaylistSongRow: View {
+    let song: Song
+    let isCurrent: Bool
+    let accentColor: Color
+    let onTap: () -> Void
+    let onPlayNext: () -> Void
+    let onAddToOtherPlaylist: () -> Void
+    let onRemove: () -> Void
 
-                                Button(role: .destructive) {
-                                    playlistManager.removeSongByFileName(song.fileURL.lastPathComponent, from: playlist.id)
-                                } label: {
-                                    Label("Quitar de esta playlist", systemImage: "minus.circle")
-                                }
-                            }
-                            .listRowBackground(AppTheme.cardBackground)
-                        }
-                        .onDelete { offsets in
-                            playlistManager.removeSongs(at: offsets, from: playlist.id)
-                        }
-                        .onMove { source, destination in
-                            playlistManager.moveSongs(from: source, to: destination, in: playlist.id)
-                        }
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                if let img = song.artworkImage {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    ZStack {
+                        AppTheme.elevatedBackground
+                        Image(systemName: "music.note")
+                            .foregroundStyle(accentColor)
                     }
                 }
-                .scrollContentBackground(.hidden)
-                .background(AppTheme.background)
-                .navigationTitle(playlist.name)
-                .environment(\.editMode, $editMode)
-                .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button {
-                            showAddSongsSheet = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
+            }
+            .frame(width: 44, height: 44)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                        Menu {
-                            Button {
-                                editedName = playlist.name
-                                showRenameAlert = true
-                            } label: {
-                                Label("Renombrar playlist", systemImage: "pencil")
-                            }
-
-                            Button {
-                                editMode = (editMode == .active) ? .inactive : .active
-                            } label: {
-                                Label(editMode == .active ? "Listo" : "Reordenar canciones", systemImage: "arrow.up.arrow.down")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
-                    }
-                }
-                .alert("Renombrar playlist", isPresented: $showRenameAlert) {
-                    TextField("Nombre", text: $editedName)
-                    Button("Guardar") {
-                        playlistManager.renamePlaylist(id: playlist.id, newName: editedName)
-                    }
-                    Button("Cancelar", role: .cancel) {}
-                }
-                .sheet(isPresented: $showAddSongsSheet) {
-                    AddSongsToPlaylistSheet(playlistID: playlist.id)
-                }
-                .sheet(item: $songToAddToPlaylist) { song in
-                    PickPlaylistForSongSheet(song: song)
-                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(song.title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(isCurrent ? accentColor : .white)
+                    .lineLimit(1)
+                Text(song.artist)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .contextMenu {
+            Button(action: onTap) {
+                Label("Reproducir ahora", systemImage: "play.fill")
+            }
+            Button(action: onPlayNext) {
+                Label("Reproducir a continuación", systemImage: "text.insert")
+            }
+            Button(action: onAddToOtherPlaylist) {
+                Label("Agregar a otra playlist", systemImage: "text.badge.plus")
+            }
+            Divider()
+            Button(role: .destructive, action: onRemove) {
+                Label("Quitar de esta playlist", systemImage: "minus.circle")
             }
         }
     }
