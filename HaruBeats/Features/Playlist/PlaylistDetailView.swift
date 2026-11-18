@@ -4,11 +4,17 @@ struct PlaylistDetailView: View {
     let playlistID: UUID
     @EnvironmentObject var audioManager: AudioPlayerManager
     @EnvironmentObject var playlistManager: PlaylistManager
+    @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
 
     @State private var showAddSongsSheet = false
     @State private var showRenameAlert = false
     @State private var editedName = ""
     @State private var editMode: EditMode = .inactive
+    @State private var songToAddToPlaylist: Song? = nil
+
+    private var accentColor: Color {
+        (AccentOption(rawValue: accentRaw) ?? .indigo).color
+    }
 
     private var playlist: Playlist? {
         playlistManager.playlists.first(where: { $0.id == playlistID })
@@ -23,80 +29,104 @@ struct PlaylistDetailView: View {
         Group {
             if let playlist {
                 List {
-                    // Cabecera con botones de reproducción
                     Section {
-                        VStack(spacing: 16) {
-                            HStack(spacing: 14) {
-                                Button {
-                                    if let first = songs.first {
-                                        audioManager.isShuffle = false
-                                        audioManager.play(song: first, inQueue: songs)
-                                    }
-                                } label: {
-                                    Label("Reproducir", systemImage: "play.fill")
-                                        .font(.subheadline.weight(.semibold))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                        .background(Color.indigo)
-                                        .foregroundStyle(.white)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                                }
-                                .disabled(songs.isEmpty)
-
-                                Button {
-                                    if let random = songs.randomElement() {
-                                        audioManager.isShuffle = true
-                                        audioManager.play(song: random, inQueue: songs)
-                                    }
-                                } label: {
-                                    Label("Aleatorio", systemImage: "shuffle")
-                                        .font(.subheadline.weight(.semibold))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                        .background(AppTheme.elevatedBackground)
-                                        .foregroundStyle(.white)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                                }
-                                .disabled(songs.isEmpty)
+                        HStack(spacing: 14) {
+                            Button {
+                                guard let first = songs.first else { return }
+                                audioManager.isShuffle = false
+                                audioManager.play(song: first, inQueue: songs)
+                            } label: {
+                                Label("Reproducir", systemImage: "play.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(accentColor)
+                                    .foregroundStyle(.white)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
+                            .buttonStyle(.plain)
+                            .disabled(songs.isEmpty)
+
+                            Button {
+                                guard let random = songs.randomElement() else { return }
+                                audioManager.isShuffle = true
+                                audioManager.play(song: random, inQueue: songs)
+                            } label: {
+                                Label("Aleatorio", systemImage: "shuffle")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(AppTheme.elevatedBackground)
+                                    .foregroundStyle(.white)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(songs.isEmpty)
                         }
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                     }
 
-                    // Lista de canciones
                     Section(header: Text("\(songs.count) canciones").foregroundStyle(AppTheme.secondaryText)) {
                         ForEach(songs) { song in
-                            Button {
-                                audioManager.play(song: song, inQueue: songs)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Group {
-                                        if let img = song.artworkImage {
-                                            Image(uiImage: img)
-                                                .resizable()
-                                                .scaledToFill()
-                                        } else {
-                                            ZStack {
-                                                AppTheme.elevatedBackground
-                                                Image(systemName: "music.note")
-                                                    .foregroundStyle(.indigo)
-                                            }
+                            HStack(spacing: 12) {
+                                Group {
+                                    if let img = song.artworkImage {
+                                        Image(uiImage: img)
+                                            .resizable()
+                                            .scaledToFill()
+                                    } else {
+                                        ZStack {
+                                            AppTheme.elevatedBackground
+                                            Image(systemName: "music.note")
+                                                .foregroundStyle(accentColor)
                                         }
                                     }
-                                    .frame(width: 44, height: 44)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                                .frame(width: 44, height: 44)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(song.title)
-                                            .font(.body.weight(.medium))
-                                            .foregroundStyle(audioManager.currentSong == song ? .indigo : .white)
-                                            .lineLimit(1)
-                                        Text(song.artist)
-                                            .font(.caption)
-                                            .foregroundStyle(AppTheme.secondaryText)
-                                            .lineLimit(1)
-                                    }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(song.title)
+                                        .font(.body.weight(.medium))
+                                        .foregroundStyle(audioManager.currentSong?.fileURL == song.fileURL ? accentColor : .white)
+                                        .lineLimit(1)
+                                    Text(song.artist)
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                audioManager.play(song: song, inQueue: songs)
+                            }
+                            .contextMenu {
+                                Button {
+                                    audioManager.play(song: song, inQueue: songs)
+                                } label: {
+                                    Label("Reproducir ahora", systemImage: "play.fill")
+                                }
+
+                                Button {
+                                    audioManager.enqueueNext(song)
+                                } label: {
+                                    Label("Reproducir a continuación", systemImage: "text.insert")
+                                }
+
+                                Button {
+                                    songToAddToPlaylist = song
+                                } label: {
+                                    Label("Agregar a otra playlist", systemImage: "text.badge.plus")
+                                }
+
+                                Divider()
+
+                                Button(role: .destructive) {
+                                    playlistManager.removeSongByFileName(song.fileURL.lastPathComponent, from: playlist.id)
+                                } label: {
+                                    Label("Quitar de esta playlist", systemImage: "minus.circle")
                                 }
                             }
                             .listRowBackground(AppTheme.cardBackground)
@@ -149,8 +179,57 @@ struct PlaylistDetailView: View {
                 .sheet(isPresented: $showAddSongsSheet) {
                     AddSongsToPlaylistSheet(playlistID: playlist.id)
                 }
+                .sheet(item: $songToAddToPlaylist) { song in
+                    PickPlaylistForSongSheet(song: song)
+                }
             }
         }
+    }
+}
+
+struct PickPlaylistForSongSheet: View {
+    let song: Song
+    @EnvironmentObject var playlistManager: PlaylistManager
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if playlistManager.playlists.isEmpty {
+                    Text("No tienes playlists creadas aún.")
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .listRowBackground(AppTheme.cardBackground)
+                } else {
+                    ForEach(playlistManager.playlists) { playlist in
+                        Button {
+                            playlistManager.addSongs([song], to: playlist.id)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Image(systemName: "music.note.list")
+                                    .foregroundStyle(.indigo)
+                                Text(playlist.name)
+                                    .foregroundStyle(.white)
+                                Spacer()
+                                Text("\(playlist.songFileNames.count)")
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.secondaryText)
+                            }
+                        }
+                        .listRowBackground(AppTheme.cardBackground)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background)
+            .navigationTitle("Elegir playlist")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cerrar") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 }
 

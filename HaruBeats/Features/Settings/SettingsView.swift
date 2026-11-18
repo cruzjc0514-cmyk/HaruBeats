@@ -13,7 +13,7 @@ struct SettingsView: View {
             List {
                 // Sección 1: Apariencia y Ecualizador
                 Section("Apariencia y Audio") {
-                    Picker("Color de acento", selection: $accentRaw) {
+                    Picker("Color de sistema", selection: $accentRaw) {
                         ForEach(AccentOption.allCases) { option in
                             Text(option.rawValue).tag(option.rawValue)
                         }

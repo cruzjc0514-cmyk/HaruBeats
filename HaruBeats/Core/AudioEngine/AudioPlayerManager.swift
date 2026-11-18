@@ -38,6 +38,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     private var totalFrames: AVAudioFramePosition = 0
     private var sampleRate: Double = 44100
     private var playbackSessionID = UUID()
+    private var lastToggleTimestamp: Date = .distantPast
 
     private var timer: Timer?
     private var sleepTimer: Timer?
@@ -255,6 +256,36 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
 
+    func deleteSong(_ song: Song) async {
+        if currentSong?.fileURL == song.fileURL {
+            playbackSessionID = UUID()
+            playerNode.stop()
+            stopTimer()
+            isPlaying = false
+            currentSong = nil
+            audioFile = nil
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        }
+        try? FileManager.default.removeItem(at: song.fileURL)
+        let lrcURL = musicDirectory.appendingPathComponent("\(song.fileURL.deletingPathExtension().lastPathComponent).lrc")
+        try? FileManager.default.removeItem(at: lrcURL)
+
+        playbackQueue.removeAll { $0.fileURL == song.fileURL }
+        await loadStoredLibrary()
+    }
+
+    func enqueueNext(_ song: Song) {
+        if playbackQueue.isEmpty {
+            playbackQueue = library
+        }
+        playbackQueue.removeAll { $0.fileURL == song.fileURL }
+        if let current = currentSong, let idx = playbackQueue.firstIndex(where: { $0.fileURL == current.fileURL }) {
+            playbackQueue.insert(song, at: idx + 1)
+        } else {
+            playbackQueue.insert(song, at: 0)
+        }
+    }
+
     func importFiles(urls: [URL]) async {
         for url in urls {
             let accessed = url.startAccessingSecurityScopedResource()
@@ -412,7 +443,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Reproducción con AVAudioEngine
+    // MARK: - Reproducción con AVAudioEngine (protegida contra toques rápidos)
 
     func play(song: Song, inQueue queue: [Song]? = nil) {
         if let queue, !queue.isEmpty {
@@ -421,23 +452,30 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             playbackQueue = library
         }
 
+        guard FileManager.default.fileExists(atPath: song.fileURL.path) else { return }
+
         do {
             configureAudioSession()
             let file = try AVAudioFile(forReading: song.fileURL)
+            let format = file.processingFormat
+            guard format.sampleRate > 0, format.channelCount > 0 else { return }
+
+            // Invalidar cualquier sesión previa antes de detener el nodo
+            playbackSessionID = UUID()
+            playerNode.stop()
+
             audioFile = file
-            sampleRate = file.processingFormat.sampleRate
+            sampleRate = format.sampleRate
             totalFrames = file.length
             duration = Double(totalFrames) / sampleRate
             seekFrameOffset = 0
             currentSong = song
             currentTime = 0
 
-            // Reconectar con el formato exacto del archivo actual (44.1kHz, 48kHz, 96kHz, etc.)
-            playerNode.stop()
             engine.disconnectNodeOutput(playerNode)
             engine.disconnectNodeOutput(eqNode)
-            engine.connect(playerNode, to: eqNode, format: file.processingFormat)
-            engine.connect(eqNode, to: engine.mainMixerNode, format: file.processingFormat)
+            engine.connect(playerNode, to: eqNode, format: format)
+            engine.connect(eqNode, to: engine.mainMixerNode, format: format)
 
             if !engine.isRunning {
                 try engine.start()
@@ -494,6 +532,18 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     func togglePlayPause() {
+        // Evitar colisiones de AVAudioEngine si se presiona el botón repetidamente muy rápido
+        let now = Date()
+        guard now.timeIntervalSince(lastToggleTimestamp) > 0.15 else { return }
+        lastToggleTimestamp = now
+
+        guard audioFile != nil else {
+            if let first = library.first {
+                play(song: first)
+            }
+            return
+        }
+
         if isPlaying {
             playerNode.pause()
             isPlaying = false
@@ -516,7 +566,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         let targetFrame = AVAudioFramePosition(clampedTime * sampleRate)
         let wasPlaying = isPlaying
 
-        playbackSessionID = UUID() // invalidar callback anterior
+        playbackSessionID = UUID()
         playerNode.stop()
         seekFrameOffset = targetFrame
         currentTime = clampedTime
@@ -539,7 +589,8 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             play(song: randomSong)
             return
         }
-        guard let current = currentSong, let idx = activeQueue.firstIndex(of: current) else {
+        guard let current = currentSong,
+              let idx = activeQueue.firstIndex(where: { $0.fileURL == current.fileURL }) else {
             play(song: activeQueue[0])
             return
         }
@@ -555,7 +606,8 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             seek(to: 0)
             return
         }
-        guard let current = currentSong, let idx = activeQueue.firstIndex(of: current) else {
+        guard let current = currentSong,
+              let idx = activeQueue.firstIndex(where: { $0.fileURL == current.fileURL }) else {
             play(song: activeQueue[0])
             return
         }

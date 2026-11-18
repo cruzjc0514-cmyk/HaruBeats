@@ -4,12 +4,19 @@ import UniformTypeIdentifiers
 struct PlaylistsView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
     @EnvironmentObject var playlistManager: PlaylistManager
+    @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
 
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistName = ""
     @State private var showM3UImporter = false
     @State private var showFolderImporter = false
     @State private var importSummaryMessage: String? = nil
+    @State private var playlistToRename: Playlist? = nil
+    @State private var renameText = ""
+
+    private var accentColor: Color {
+        (AccentOption(rawValue: accentRaw) ?? .indigo).color
+    }
 
     var body: some View {
         NavigationStack {
@@ -18,7 +25,7 @@ struct PlaylistsView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "music.note.list")
                             .font(.system(size: 48))
-                            .foregroundStyle(.indigo)
+                            .foregroundStyle(accentColor)
                         Text("Sin playlists todavía")
                             .font(.headline)
                         Text("Crea una playlist, importa una carpeta completa o carga tu archivo descargas.m3u8.")
@@ -35,7 +42,7 @@ struct PlaylistsView: View {
                                     .font(.subheadline.weight(.semibold))
                                     .padding(.horizontal, 18)
                                     .padding(.vertical, 11)
-                                    .background(Color.indigo)
+                                    .background(accentColor)
                                     .foregroundStyle(.white)
                                     .clipShape(Capsule())
                             }
@@ -87,7 +94,7 @@ struct PlaylistsView: View {
                                                     .clipShape(RoundedRectangle(cornerRadius: 10))
                                             } else {
                                                 Image(systemName: "music.note.list")
-                                                    .foregroundStyle(.indigo)
+                                                    .foregroundStyle(accentColor)
                                             }
                                         }
 
@@ -99,6 +106,42 @@ struct PlaylistsView: View {
                                             .font(.caption)
                                             .foregroundStyle(AppTheme.secondaryText)
                                     }
+                                }
+                            }
+                            .contextMenu {
+                                Button {
+                                    if let first = resolved.first {
+                                        audioManager.isShuffle = false
+                                        audioManager.play(song: first, inQueue: resolved)
+                                    }
+                                } label: {
+                                    Label("Reproducir", systemImage: "play.fill")
+                                }
+                                .disabled(resolved.isEmpty)
+
+                                Button {
+                                    if let random = resolved.randomElement() {
+                                        audioManager.isShuffle = true
+                                        audioManager.play(song: random, inQueue: resolved)
+                                    }
+                                } label: {
+                                    Label("Reproducir en aleatorio", systemImage: "shuffle")
+                                }
+                                .disabled(resolved.isEmpty)
+
+                                Button {
+                                    renameText = playlist.name
+                                    playlistToRename = playlist
+                                } label: {
+                                    Label("Renombrar", systemImage: "pencil")
+                                }
+
+                                Divider()
+
+                                Button(role: .destructive) {
+                                    playlistManager.deletePlaylist(id: playlist.id)
+                                } label: {
+                                    Label("Eliminar playlist", systemImage: "trash")
                                 }
                             }
                             .listRowBackground(AppTheme.cardBackground)
@@ -136,7 +179,7 @@ struct PlaylistsView: View {
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .font(.title3)
-                            .foregroundStyle(.indigo)
+                            .foregroundStyle(accentColor)
                     }
                 }
             }
@@ -144,6 +187,18 @@ struct PlaylistsView: View {
                 TextField("Nombre de la playlist", text: $newPlaylistName)
                 Button("Crear") {
                     playlistManager.createPlaylist(name: newPlaylistName)
+                }
+                Button("Cancelar", role: .cancel) {}
+            }
+            .alert("Renombrar playlist", isPresented: Binding(
+                get: { playlistToRename != nil },
+                set: { if !$0 { playlistToRename = nil } }
+            )) {
+                TextField("Nuevo nombre", text: $renameText)
+                Button("Guardar") {
+                    if let target = playlistToRename {
+                        playlistManager.renamePlaylist(id: target.id, newName: renameText)
+                    }
                 }
                 Button("Cancelar", role: .cancel) {}
             }
@@ -162,7 +217,7 @@ struct PlaylistsView: View {
                                 name: outcome.folderName,
                                 songs: outcome.importedSongs
                             )
-                            importSummaryMessage = "Se creó la playlist '\(outcome.folderName)' con \(outcome.importedSongs.count) canciones (y sus letras .lrc disponibles)."
+                            importSummaryMessage = "Se creó la playlist '\(outcome.folderName)' con \(outcome.importedSongs.count) canciones."
                         }
                     }
                 }
