@@ -3,28 +3,41 @@ options:
   bundleIdPrefix: com.harubeats
   deploymentTarget:
     iOS: "17.0"
+  xcodeVersion: "16.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    TARGETED_DEVICE_FAMILY: "1"
+
 targets:
   HaruBeats:
     type: application
     platform: iOS
+    deploymentTarget: "17.0"
     sources:
       - path: HaruBeats
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.harubeats.app
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        SUPPORTS_MACCATALYST: NO
     info:
       path: HaruBeats/Info.plist
       properties:
+        CFBundleDisplayName: HaruBeats
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
         UIBackgroundModes:
           - audio
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
-        NSLocalNetworkUsageDescription: "HaruBeats necesita acceso a tu red local para recibir música desde tu computadora por Wi-Fi."
-        NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
-    settings:
-      base:
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
-        PRODUCT_BUNDLE_IDENTIFIER: com.harubeats.app
-        MARKETING_VERSION: "0.3.0"
-        CURRENT_PROJECT_VERSION: "3"
-        GENERATE_INFOPLIST_FILE: YES
+        NSLocalNetworkUsageDescription: "HaruBeats usa la red local para transferir tu música, letras y playlists desde tu PC por Wi-Fi."
