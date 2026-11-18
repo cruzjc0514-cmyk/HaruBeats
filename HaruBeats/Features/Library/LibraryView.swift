@@ -3,8 +3,11 @@ import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
-    @State private var showImporter = false
+    @EnvironmentObject var playlistManager: PlaylistManager
+    @State private var showFileImporter = false
+    @State private var showFolderImporter = false
     @State private var searchText = ""
+    @State private var folderImportMessage: String? = nil
 
     var filteredSongs: [Song] {
         if searchText.isEmpty { return audioManager.library }
@@ -19,7 +22,7 @@ struct LibraryView: View {
             List {
                 ForEach(filteredSongs) { song in
                     Button {
-                        audioManager.play(song: song)
+                        audioManager.play(song: song, inQueue: filteredSongs)
                     } label: {
                         HStack(spacing: 12) {
                             Group {
@@ -59,8 +62,18 @@ struct LibraryView: View {
             .navigationTitle("Biblioteca")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showImporter = true
+                    Menu {
+                        Button {
+                            showFileImporter = true
+                        } label: {
+                            Label("Importar archivos", systemImage: "doc.badge.plus")
+                        }
+
+                        Button {
+                            showFolderImporter = true
+                        } label: {
+                            Label("Importar carpeta (crea playlist)", systemImage: "folder.badge.plus")
+                        }
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .font(.title3)
@@ -69,7 +82,7 @@ struct LibraryView: View {
                 }
             }
             .fileImporter(
-                isPresented: $showImporter,
+                isPresented: $showFileImporter,
                 allowedContentTypes: [.audio, .plainText, UTType(filenameExtension: "lrc") ?? .data],
                 allowsMultipleSelection: true
             ) { result in
@@ -78,6 +91,34 @@ struct LibraryView: View {
                         await audioManager.importFiles(urls: urls)
                     }
                 }
+            }
+            .fileImporter(
+                isPresented: $showFolderImporter,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let folderURL = urls.first {
+                    Task {
+                        let outcome = await audioManager.importFolder(url: folderURL)
+                        if !outcome.importedSongs.isEmpty {
+                            playlistManager.createPlaylist(
+                                name: outcome.folderName,
+                                songs: outcome.importedSongs
+                            )
+                            folderImportMessage = "Se importaron \(outcome.importedSongs.count) canciones y se creó la playlist '\(outcome.folderName)'."
+                        } else {
+                            folderImportMessage = "No se encontraron archivos de audio compatibles en '\(outcome.folderName)'."
+                        }
+                    }
+                }
+            }
+            .alert("Importación de carpeta", isPresented: Binding(
+                get: { folderImportMessage != nil },
+                set: { if !$0 { folderImportMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(folderImportMessage ?? "")
             }
         }
     }

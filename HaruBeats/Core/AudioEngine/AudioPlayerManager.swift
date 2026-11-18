@@ -151,6 +151,57 @@ final class AudioPlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegat
         }
     }
 
+    /// Importa recursivamente todos los audios y letras .lrc de una carpeta y devuelve las canciones importadas
+    func importFolder(url folderURL: URL) async -> (folderName: String, importedSongs: [Song]) {
+        let folderName = folderURL.lastPathComponent
+        let accessed = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { folderURL.stopAccessingSecurityScopedResource() }
+        }
+
+        let allowedExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac", "lrc"]
+        let audioExtensions = ["flac", "mp3", "m4a", "aac", "wav", "alac"]
+        var copiedAudioFileNames: [String] = []
+
+        if let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            let fileURLs = enumerator.allObjects.compactMap { $0 as? URL }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+
+            for fileURL in fileURLs {
+                let ext = fileURL.pathExtension.lowercased()
+                guard allowedExtensions.contains(ext) else { continue }
+
+                let destination = musicDirectory.appendingPathComponent(fileURL.lastPathComponent)
+                do {
+                    if FileManager.default.fileExists(atPath: destination.path) {
+                        try FileManager.default.removeItem(at: destination)
+                    }
+                    try FileManager.default.copyItem(at: fileURL, to: destination)
+                    if audioExtensions.contains(ext) {
+                        copiedAudioFileNames.append(fileURL.lastPathComponent)
+                    }
+                } catch {
+                    print("Error copiando desde carpeta \(fileURL.lastPathComponent): \(error)")
+                }
+            }
+        }
+
+        await loadStoredLibrary()
+        if let currentSong {
+            loadLyrics(for: currentSong)
+        }
+
+        // Mantener el orden original de pistas de la carpeta
+        let orderedSongs = copiedAudioFileNames.compactMap { fileName in
+            library.first(where: { $0.fileURL.lastPathComponent == fileName })
+        }
+        return (folderName, orderedSongs)
+    }
+
     func loadLyrics(for song: Song) {
         let baseName = song.fileURL.deletingPathExtension().lastPathComponent
         let lrcURL = musicDirectory.appendingPathComponent("\(baseName).lrc")

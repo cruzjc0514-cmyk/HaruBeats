@@ -8,6 +8,7 @@ struct PlaylistsView: View {
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistName = ""
     @State private var showM3UImporter = false
+    @State private var showFolderImporter = false
     @State private var importSummaryMessage: String? = nil
 
     var body: some View {
@@ -20,36 +21,50 @@ struct PlaylistsView: View {
                             .foregroundStyle(.indigo)
                         Text("Sin playlists todavía")
                             .font(.headline)
-                        Text("Crea una playlist nueva o importa tu archivo descargas.m3u8 desde la carpeta James Gunn VIBES.")
+                        Text("Crea una playlist, importa una carpeta completa o carga tu archivo descargas.m3u8.")
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 32)
 
-                        HStack(spacing: 12) {
+                        VStack(spacing: 10) {
                             Button {
-                                newPlaylistName = ""
-                                showNewPlaylistAlert = true
+                                showFolderImporter = true
                             } label: {
-                                Label("Nueva playlist", systemImage: "plus")
+                                Label("Importar carpeta como playlist", systemImage: "folder.badge.plus")
                                     .font(.subheadline.weight(.semibold))
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
+                                    .padding(.horizontal, 18)
+                                    .padding(.vertical, 11)
                                     .background(Color.indigo)
                                     .foregroundStyle(.white)
                                     .clipShape(Capsule())
                             }
 
-                            Button {
-                                showM3UImporter = true
-                            } label: {
-                                Label("Importar .m3u8", systemImage: "square.and.arrow.down")
-                                    .font(.subheadline.weight(.semibold))
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
-                                    .background(AppTheme.elevatedBackground)
-                                    .foregroundStyle(.white)
-                                    .clipShape(Capsule())
+                            HStack(spacing: 12) {
+                                Button {
+                                    newPlaylistName = ""
+                                    showNewPlaylistAlert = true
+                                } label: {
+                                    Label("Nueva", systemImage: "plus")
+                                        .font(.subheadline.weight(.semibold))
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 10)
+                                        .background(AppTheme.elevatedBackground)
+                                        .foregroundStyle(.white)
+                                        .clipShape(Capsule())
+                                }
+
+                                Button {
+                                    showM3UImporter = true
+                                } label: {
+                                    Label("Importar .m3u8", systemImage: "square.and.arrow.down")
+                                        .font(.subheadline.weight(.semibold))
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 10)
+                                        .background(AppTheme.elevatedBackground)
+                                        .foregroundStyle(.white)
+                                        .clipShape(Capsule())
+                                }
                             }
                         }
                     }
@@ -98,18 +113,30 @@ struct PlaylistsView: View {
             }
             .navigationTitle("Playlists")
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        showM3UImporter = true
-                    } label: {
-                        Image(systemName: "square.and.arrow.down")
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            newPlaylistName = ""
+                            showNewPlaylistAlert = true
+                        } label: {
+                            Label("Nueva playlist vacía", systemImage: "plus")
+                        }
 
-                    Button {
-                        newPlaylistName = ""
-                        showNewPlaylistAlert = true
+                        Button {
+                            showFolderImporter = true
+                        } label: {
+                            Label("Importar carpeta como playlist", systemImage: "folder.badge.plus")
+                        }
+
+                        Button {
+                            showM3UImporter = true
+                        } label: {
+                            Label("Importar archivo .m3u8", systemImage: "square.and.arrow.down")
+                        }
                     } label: {
                         Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.indigo)
                     }
                 }
             }
@@ -119,6 +146,26 @@ struct PlaylistsView: View {
                     playlistManager.createPlaylist(name: newPlaylistName)
                 }
                 Button("Cancelar", role: .cancel) {}
+            }
+            .fileImporter(
+                isPresented: $showFolderImporter,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let folderURL = urls.first {
+                    Task {
+                        let outcome = await audioManager.importFolder(url: folderURL)
+                        if outcome.importedSongs.isEmpty {
+                            importSummaryMessage = "No se encontraron archivos de audio compatibles dentro de '\(outcome.folderName)'."
+                        } else {
+                            playlistManager.createPlaylist(
+                                name: outcome.folderName,
+                                songs: outcome.importedSongs
+                            )
+                            importSummaryMessage = "Se creó la playlist '\(outcome.folderName)' con \(outcome.importedSongs.count) canciones (y sus letras .lrc disponibles)."
+                        }
+                    }
+                }
             }
             .fileImporter(
                 isPresented: $showM3UImporter,
@@ -142,7 +189,7 @@ struct PlaylistsView: View {
                     }
                 }
             }
-            .alert("Importación M3U8", isPresented: Binding(
+            .alert("Importación completada", isPresented: Binding(
                 get: { importSummaryMessage != nil },
                 set: { if !$0 { importSummaryMessage = nil } }
             )) {
