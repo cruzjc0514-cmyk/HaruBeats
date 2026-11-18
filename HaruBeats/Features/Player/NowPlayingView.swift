@@ -28,34 +28,15 @@ struct NowPlayingView: View {
             .ignoresSafeArea()
 
             if let song = audioManager.currentSong {
-                VStack(spacing: 18) {
-                    // Indicador superior y botón de letras
-                    HStack {
-                        Spacer()
-                        Capsule()
-                            .fill(Color.white.opacity(0.35))
-                            .frame(width: 40, height: 5)
-                        Spacer()
-                    }
-                    .overlay(alignment: .trailing) {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                showLyrics.toggle()
-                            }
-                        } label: {
-                            Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
-                                .font(.title3)
-                                .foregroundStyle(showLyrics ? .white : .white.opacity(0.75))
-                                .padding(8)
-                                .background(showLyrics ? Color.white.opacity(0.22) : Color.clear)
-                                .clipShape(Circle())
-                        }
-                        .padding(.trailing, 24)
-                    }
-                    .padding(.top, 12)
+                VStack(spacing: 16) {
+                    // Indicador de arrastre centrado con margen seguro
+                    Capsule()
+                        .fill(Color.white.opacity(0.35))
+                        .frame(width: 40, height: 5)
+                        .padding(.top, 14)
 
                     if showLyrics {
-                        // Vista compacta arriba + Letras sincronizadas
+                        // Encabezado compacto con miniatura, título y botón de letras alineado
                         HStack(spacing: 12) {
                             Group {
                                 if let uiImage = song.artworkImage {
@@ -79,13 +60,24 @@ struct NowPlayingView: View {
                                     .foregroundStyle(AppTheme.secondaryText)
                                     .lineLimit(1)
                             }
+
                             Spacer()
+
+                            lyricsToggleButton
                         }
-                        .padding(.horizontal, 28)
+                        .padding(.horizontal, 26)
+                        .padding(.top, 4)
 
                         LyricsView()
                             .frame(maxHeight: .infinity)
                     } else {
+                        // Barra superior derecha para abrir letras sin chocar con el borde
+                        HStack {
+                            Spacer()
+                            lyricsToggleButton
+                        }
+                        .padding(.horizontal, 26)
+
                         Spacer()
 
                         Group {
@@ -102,7 +94,7 @@ struct NowPlayingView: View {
                                 }
                             }
                         }
-                        .frame(width: 295, height: 295)
+                        .frame(width: 290, height: 290)
                         .clipShape(RoundedRectangle(cornerRadius: 24))
                         .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
 
@@ -215,6 +207,21 @@ struct NowPlayingView: View {
                     .padding(.bottom, 18)
                 }
             }
+        }
+    }
+
+    private var lyricsToggleButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                showLyrics.toggle()
+            }
+        } label: {
+            Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(showLyrics ? .white : .white.opacity(0.85))
+                .frame(width: 38, height: 38)
+                .background(showLyrics ? Color.white.opacity(0.24) : Color.white.opacity(0.12))
+                .clipShape(Circle())
         }
     }
 
