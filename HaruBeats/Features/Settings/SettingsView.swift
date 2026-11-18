@@ -5,18 +5,46 @@ struct SettingsView: View {
     @EnvironmentObject var playlistManager: PlaylistManager
     @StateObject private var wifiServer = WiFiTransferServer()
     @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
+    @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
     @State private var usbMessage: String? = nil
     @State private var showEQSheet = false
+
+    private var effectiveAccent: Color {
+        if useDynamicColors, let dynamic = audioManager.dynamicArtworkColor {
+            return dynamic
+        }
+        return (AccentOption(rawValue: accentRaw) ?? .indigo).color
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                // Sección 1: Apariencia y Ecualizador
+                // Sección 1: Apariencia y Audio
                 Section("Apariencia y Audio") {
+                    Toggle(isOn: $useDynamicColors) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Color dinámico de portada")
+                                .foregroundStyle(.white)
+                            Text("Adapta la interfaz al color del álbum actual")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+                    .tint(effectiveAccent)
+                    .listRowBackground(AppTheme.cardBackground)
+
                     Picker("Color de sistema", selection: $accentRaw) {
                         ForEach(AccentOption.allCases) { option in
                             Text(option.rawValue).tag(option.rawValue)
                         }
+                    }
+                    .listRowBackground(AppTheme.cardBackground)
+
+                    Picker("Crossfade entre canciones", selection: $audioManager.crossfadeDuration) {
+                        Text("Desactivado").tag(0.0)
+                        Text("2 segundos").tag(2.0)
+                        Text("4 segundos").tag(4.0)
+                        Text("6 segundos").tag(6.0)
                     }
                     .listRowBackground(AppTheme.cardBackground)
 
@@ -50,7 +78,7 @@ struct SettingsView: View {
                         Label("Servidor Wi-Fi", systemImage: "wifi")
                             .foregroundStyle(.white)
                     }
-                    .tint(.indigo)
+                    .tint(effectiveAccent)
                     .listRowBackground(AppTheme.cardBackground)
 
                     if wifiServer.isRunning {
@@ -61,7 +89,7 @@ struct SettingsView: View {
 
                             Text(wifiServer.serverURL)
                                 .font(.headline.monospaced())
-                                .foregroundStyle(.indigo)
+                                .foregroundStyle(effectiveAccent)
                                 .textSelection(.enabled)
 
                             HStack {
@@ -101,8 +129,8 @@ struct SettingsView: View {
                     Text("Transferencia por cable USB")
                 }
 
-                // Sección 4: Resumen de biblioteca
-                Section("Colección local") {
+                // Sección 4: Resumen de biblioteca y estadísticas
+                Section("Colección y estadísticas") {
                     HStack {
                         Text("Canciones almacenadas")
                         Spacer()
@@ -115,6 +143,14 @@ struct SettingsView: View {
                         Text("Playlists guardadas")
                         Spacer()
                         Text("\(playlistManager.playlists.count)")
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    .listRowBackground(AppTheme.cardBackground)
+
+                    HStack {
+                        Text("Reproducciones totales")
+                        Spacer()
+                        Text("\(audioManager.playCounts.values.reduce(0, +))")
                             .foregroundStyle(AppTheme.secondaryText)
                     }
                     .listRowBackground(AppTheme.cardBackground)

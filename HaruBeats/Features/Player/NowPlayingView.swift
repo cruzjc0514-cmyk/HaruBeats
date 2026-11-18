@@ -3,17 +3,22 @@ import SwiftUI
 struct NowPlayingView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
     @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
+    @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
     @State private var dragProgress: Double? = nil
     @State private var showLyrics: Bool = false
     @State private var showEQSheet: Bool = false
+    @State private var showQueueSheet: Bool = false
 
-    private var accentColor: Color {
-        (AccentOption(rawValue: accentRaw) ?? .indigo).color
+    private var effectiveAccent: Color {
+        if useDynamicColors, let dynamic = audioManager.dynamicArtworkColor {
+            return dynamic
+        }
+        return (AccentOption(rawValue: accentRaw) ?? .indigo).color
     }
 
     var body: some View {
         ZStack {
-            // Fondo ambiental
+            // Fondo ambiental dinámico
             GeometryReader { geo in
                 if let song = audioManager.currentSong, let uiImage = song.artworkImage {
                     Image(uiImage: uiImage)
@@ -21,11 +26,20 @@ struct NowPlayingView: View {
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .blur(radius: 65)
-                        .overlay(Color.black.opacity(showLyrics ? 0.72 : 0.55))
+                        .overlay(
+                            LinearGradient(
+                                colors: [
+                                    effectiveAccent.opacity(useDynamicColors ? 0.32 : 0.12),
+                                    Color.black.opacity(showLyrics ? 0.78 : 0.62)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
                         .clipped()
                 } else {
                     LinearGradient(
-                        colors: [accentColor.opacity(0.45), AppTheme.background],
+                        colors: [effectiveAccent.opacity(0.45), AppTheme.background],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -76,7 +90,7 @@ struct NowPlayingView: View {
                             .frame(maxHeight: .infinity)
                     } else {
                         HStack {
-                            AudioVisualizerView(isPlaying: audioManager.isPlaying, accentColor: accentColor)
+                            AudioVisualizerView(isPlaying: audioManager.isPlaying, accentColor: effectiveAccent)
                             Spacer()
                             lyricsToggleButton
                         }
@@ -94,13 +108,13 @@ struct NowPlayingView: View {
                                     AppTheme.cardBackground
                                     Image(systemName: "waveform")
                                         .font(.system(size: 72))
-                                        .foregroundStyle(accentColor)
+                                        .foregroundStyle(effectiveAccent)
                                 }
                             }
                         }
                         .frame(width: 280, height: 280)
                         .clipShape(RoundedRectangle(cornerRadius: 24))
-                        .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+                        .shadow(color: effectiveAccent.opacity(0.35), radius: 24, y: 12)
 
                         VStack(spacing: 6) {
                             Text(song.title)
@@ -164,7 +178,7 @@ struct NowPlayingView: View {
                         } label: {
                             Image(systemName: "shuffle")
                                 .font(.title3)
-                                .foregroundStyle(audioManager.isShuffle ? accentColor : .white.opacity(0.7))
+                                .foregroundStyle(audioManager.isShuffle ? effectiveAccent : .white.opacity(0.7))
                         }
 
                         Button {
@@ -196,18 +210,18 @@ struct NowPlayingView: View {
                         } label: {
                             Image(systemName: audioManager.isRepeatOne ? "repeat.1" : "repeat")
                                 .font(.title3)
-                                .foregroundStyle(audioManager.isRepeatOne ? accentColor : .white.opacity(0.7))
+                                .foregroundStyle(audioManager.isRepeatOne ? effectiveAccent : .white.opacity(0.7))
                         }
                     }
 
-                    // Herramientas de audio (Ecualizador y Temporizador)
-                    HStack(spacing: 28) {
+                    // Herramientas inferiores: Ecualizador, Temporizador y Cola interactiva
+                    HStack(spacing: 14) {
                         Button {
                             showEQSheet = true
                         } label: {
                             Label(audioManager.isEQEnabled ? audioManager.selectedPreset.rawValue : "EQ Off", systemImage: "slider.vertical.3")
                                 .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 14)
+                                .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .background(Color.white.opacity(0.14))
                                 .foregroundStyle(.white)
@@ -229,9 +243,21 @@ struct NowPlayingView: View {
                         } label: {
                             Label(sleepTimerLabel, systemImage: "moon.zzz.fill")
                                 .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 14)
+                                .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(isSleepTimerActive ? accentColor.opacity(0.35) : Color.white.opacity(0.14))
+                                .background(isSleepTimerActive ? effectiveAccent.opacity(0.45) : Color.white.opacity(0.14))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+
+                        Button {
+                            showQueueSheet = true
+                        } label: {
+                            Label("Cola", systemImage: "list.bullet")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.white.opacity(0.14))
                                 .foregroundStyle(.white)
                                 .clipShape(Capsule())
                         }
@@ -243,6 +269,9 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showEQSheet) {
             EqualizerSheetView()
         }
+        .sheet(isPresented: $showQueueSheet) {
+            QueueSheetView()
+        }
     }
 
     private var isSleepTimerActive: Bool {
@@ -250,13 +279,13 @@ struct NowPlayingView: View {
     }
 
     private var sleepTimerLabel: String {
-        if audioManager.stopAfterCurrentSong { return "Fin de pista" }
+        if audioManager.stopAfterCurrentSong { return "Fin pista" }
         if let rem = audioManager.sleepTimerRemaining {
             let mins = Int(rem) / 60
             let secs = Int(rem) % 60
             return String(format: "%d:%02d", mins, secs)
         }
-        return "Temporizador"
+        return "Timer"
     }
 
     private var lyricsToggleButton: some View {
@@ -269,7 +298,7 @@ struct NowPlayingView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(showLyrics ? .white : .white.opacity(0.85))
                 .frame(width: 38, height: 38)
-                .background(showLyrics ? Color.white.opacity(0.24) : Color.white.opacity(0.12))
+                .background(showLyrics ? effectiveAccent.opacity(0.45) : Color.white.opacity(0.12))
                 .clipShape(Circle())
         }
     }

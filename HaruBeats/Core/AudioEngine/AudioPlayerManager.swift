@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import AVFoundation
 import MediaPlayer
 import Combine
@@ -16,6 +17,9 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var isRepeatOne: Bool = false
     @Published var isScrubbing: Bool = false
 
+    // Color ambiental dinámico extraído de la portada
+    @Published var dynamicArtworkColor: Color? = nil
+
     // Ecualizador de 5 bandas
     @Published var isEQEnabled: Bool = true {
         didSet { eqNode.bypass = !isEQEnabled; saveEQSettings() }
@@ -27,7 +31,22 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var sleepTimerRemaining: TimeInterval? = nil
     @Published var stopAfterCurrentSong: Bool = false
 
-    // Motor AVAudioEngine con grafo fijo (nunca se desconecta en caliente)
+    // Sincronización LRC en vivo (desfase en segundos) y tamaño de fuente
+    @Published var lyricsOffset: TimeInterval = 0
+    @Published var lyricsFontScale: Double = 1.0 {
+        didSet { UserDefaults.standard.set(lyricsFontScale, forKey: "hb_lyrics_scale") }
+    }
+
+    // Crossfade entre pistas (0 = desactivado, 2, 4, 6 segundos)
+    @Published var crossfadeDuration: Double = 0 {
+        didSet { UserDefaults.standard.set(crossfadeDuration, forKey: "hb_crossfade_duration") }
+    }
+
+    // Historial y estadísticas de reproducción
+    @Published var recentFileNames: [String] = []
+    @Published var playCounts: [String: Int] = [:]
+
+    // Motor AVAudioEngine con grafo fijo
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let eqNode = AVAudioUnitEQ(numberOfBands: 5)
@@ -39,6 +58,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     private var fileSampleRate: Double = 44100
     private var playbackGeneration: UInt64 = 0
     private var lastCommandTime: Date = .distantPast
+    private var fadeInRemaining: Double = 0
 
     private var timer: Timer?
     private var sleepTimer: Timer?
@@ -55,10 +75,26 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         return folder
     }
 
+    var recentSongs: [Song] {
+        recentFileNames.compactMap { name in
+            library.first(where: { $0.fileURL.lastPathComponent == name })
+        }
+    }
+
+    var topPlayedSongs: [(song: Song, count: Int)] {
+        playCounts
+            .compactMap { fileName, count -> (Song, Int)? in
+                guard count > 0, let song = library.first(where: { $0.fileURL.lastPathComponent == fileName }) else { return nil }
+                return (song, count)
+            }
+            .sorted { $0.1 > $1.1 }
+    }
+
     override init() {
         super.init()
         setupAudioEngine()
         loadEQSettings()
+        loadUserPreferencesAndStats()
         configureAudioSession()
         setupRemoteTransportControls()
         Task {
@@ -79,11 +115,53 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             band.bypass = false
         }
 
-        // Conexión fija: format nil permite que AVAudioEngine adapte cualquier sampleRate sin desconectar nodos
         engine.connect(playerNode, to: eqNode, format: nil)
         engine.connect(eqNode, to: engine.mainMixerNode, format: nil)
         engine.prepare()
     }
+
+    // MARK: - Preferencias, Estadísticas y Desfase LRC
+
+    private func loadUserPreferencesAndStats() {
+        if let scale = UserDefaults.standard.object(forKey: "hb_lyrics_scale") as? Double, scale >= 0.8 {
+            lyricsFontScale = scale
+        }
+        crossfadeDuration = UserDefaults.standard.double(forKey: "hb_crossfade_duration")
+        recentFileNames = UserDefaults.standard.stringArray(forKey: "hb_recent_files") ?? []
+        if let savedCounts = UserDefaults.standard.dictionary(forKey: "hb_play_counts") as? [String: Int] {
+            playCounts = savedCounts
+        }
+    }
+
+    private func recordSongPlayed(_ song: Song) {
+        let fileName = song.fileURL.lastPathComponent
+
+        recentFileNames.removeAll { $0 == fileName }
+        recentFileNames.insert(fileName, at: 0)
+        if recentFileNames.count > 25 {
+            recentFileNames = Array(recentFileNames.prefix(25))
+        }
+        UserDefaults.standard.set(recentFileNames, forKey: "hb_recent_files")
+
+        playCounts[fileName, default: 0] += 1
+        UserDefaults.standard.set(playCounts, forKey: "hb_play_counts")
+    }
+
+    func adjustLyricsOffset(by delta: TimeInterval) {
+        lyricsOffset = (lyricsOffset + delta * 10).rounded() / 10
+        if let song = currentSong {
+            UserDefaults.standard.set(lyricsOffset, forKey: "hb_lrc_offset_\(song.fileURL.lastPathComponent)")
+        }
+    }
+
+    func resetLyricsOffset() {
+        lyricsOffset = 0
+        if let song = currentSong {
+            UserDefaults.standard.removeObject(forKey: "hb_lrc_offset_\(song.fileURL.lastPathComponent)")
+        }
+    }
+
+    // MARK: - Ecualizador
 
     func applyPreset(_ preset: EqualizerPreset) {
         selectedPreset = preset
@@ -239,7 +317,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
-    // MARK: - Biblioteca e importación
+    // MARK: - Biblioteca, Cola e Importación
 
     func loadStoredLibrary() async {
         guard let files = try? FileManager.default.contentsOfDirectory(
@@ -262,7 +340,6 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     func deleteSong(_ song: Song) async {
-        // 1. Detener el motor de forma limpia ANTES de borrar el archivo del disco
         playbackGeneration &+= 1
         stopTimer()
 
@@ -273,17 +350,16 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             audioFile = nil
             isPlaying = false
             currentSong = nil
+            dynamicArtworkColor = nil
             currentTime = 0
             duration = 0
             currentLyrics = []
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         }
 
-        // 2. Eliminar de la cola y listas en memoria primero para que SwiftUI no renderice un archivo borrado
         library.removeAll { $0.fileURL == song.fileURL }
         playbackQueue.removeAll { $0.fileURL == song.fileURL }
 
-        // 3. Borrar archivos físicos
         try? FileManager.default.removeItem(at: song.fileURL)
         let lrcURL = musicDirectory.appendingPathComponent("\(song.fileURL.deletingPathExtension().lastPathComponent).lrc")
         try? FileManager.default.removeItem(at: lrcURL)
@@ -299,6 +375,14 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         } else {
             playbackQueue.insert(song, at: 0)
         }
+    }
+
+    func moveInQueue(from source: IndexSet, to destination: Int) {
+        playbackQueue.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func removeFromQueue(at offsets: IndexSet) {
+        playbackQueue.remove(atOffsets: offsets)
     }
 
     func importFiles(urls: [URL]) async {
@@ -429,6 +513,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     func loadLyrics(for song: Song) {
         let baseName = song.fileURL.deletingPathExtension().lastPathComponent
         let lrcURL = musicDirectory.appendingPathComponent("\(baseName).lrc")
+        lyricsOffset = UserDefaults.standard.double(forKey: "hb_lrc_offset_\(song.fileURL.lastPathComponent)")
 
         if FileManager.default.fileExists(atPath: lrcURL.path),
            let content = try? String(contentsOf: lrcURL, encoding: .utf8) {
@@ -458,7 +543,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Reproducción segura sin reconexión de nodos
+    // MARK: - Reproducción con Crossfade y Color Dinámico
 
     func play(song: Song, inQueue queue: [Song]? = nil) {
         if let queue, !queue.isEmpty {
@@ -469,7 +554,6 @@ final class AudioPlayerManager: NSObject, ObservableObject {
 
         guard FileManager.default.fileExists(atPath: song.fileURL.path) else { return }
 
-        // Incrementar generación para invalidar cualquier callback de una pista anterior
         playbackGeneration &+= 1
         let gen = playbackGeneration
 
@@ -479,7 +563,6 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             let format = file.processingFormat
             guard format.sampleRate > 0, format.channelCount > 0, file.length > 0 else { return }
 
-            // Detener reproducción actual sin desconectar nodos del grafo
             playerNode.stop()
             playerNode.reset()
 
@@ -490,6 +573,15 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             seekFrameOffset = 0
             currentSong = song
             currentTime = 0
+            dynamicArtworkColor = ArtworkColorExtractor.dominantColor(from: song.artworkImage)
+
+            if crossfadeDuration > 0 {
+                playerNode.volume = 0.05
+                fadeInRemaining = crossfadeDuration
+            } else {
+                playerNode.volume = 1.0
+                fadeInRemaining = 0
+            }
 
             if !engine.isRunning {
                 engine.prepare()
@@ -500,6 +592,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             playerNode.play()
 
             isPlaying = true
+            recordSongPlayed(song)
             loadLyrics(for: song)
             updateNowPlayingInfo()
             startTimer()
@@ -528,6 +621,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func handleTrackCompleted() {
+        playerNode.volume = 1.0
         if stopAfterCurrentSong {
             stopAfterCurrentSong = false
             isPlaying = false
@@ -565,6 +659,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             if !engine.isRunning {
                 try? engine.start()
             }
+            playerNode.volume = 1.0
             playerNode.play()
             isPlaying = true
             startTimer()
@@ -573,7 +668,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     func seek(to time: TimeInterval) {
-        guard let file = audioFile, duration > 0 else { return }
+        guard audioFile != nil, duration > 0 else { return }
         let clampedTime = min(max(time, 0), duration)
         let targetFrame = min(max(AVAudioFramePosition(clampedTime * fileSampleRate), 0), totalFrames - 1)
         let wasPlaying = isPlaying
@@ -583,6 +678,8 @@ final class AudioPlayerManager: NSObject, ObservableObject {
 
         playerNode.stop()
         playerNode.reset()
+        playerNode.volume = 1.0
+        fadeInRemaining = 0
         seekFrameOffset = targetFrame
         currentTime = clampedTime
 
@@ -638,7 +735,8 @@ final class AudioPlayerManager: NSObject, ObservableObject {
 
     private func startTimer() {
         stopTimer()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+        let tickInterval = 0.15
+        timer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isPlaying, !self.isScrubbing,
                       let nodeTime = self.playerNode.lastRenderTime,
@@ -650,8 +748,28 @@ final class AudioPlayerManager: NSObject, ObservableObject {
                 let computed = offsetSeconds + playedSeconds
                 if computed >= 0 && computed <= self.duration {
                     self.currentTime = computed
+                    self.applyCrossfadeGain(at: computed, tick: tickInterval)
                 }
             }
+        }
+    }
+
+    private func applyCrossfadeGain(at time: TimeInterval, tick: Double) {
+        guard crossfadeDuration > 0, duration > crossfadeDuration * 2 else {
+            if playerNode.volume < 1.0 { playerNode.volume = 1.0 }
+            return
+        }
+
+        let remaining = duration - time
+        if fadeInRemaining > 0 {
+            fadeInRemaining = max(fadeInRemaining - tick, 0)
+            let progress = 1.0 - (fadeInRemaining / crossfadeDuration)
+            playerNode.volume = Float(min(max(progress, 0.05), 1.0))
+        } else if remaining <= crossfadeDuration && remaining > 0 {
+            let progress = remaining / crossfadeDuration
+            playerNode.volume = Float(min(max(progress, 0.05), 1.0))
+        } else if playerNode.volume != 1.0 {
+            playerNode.volume = 1.0
         }
     }
 

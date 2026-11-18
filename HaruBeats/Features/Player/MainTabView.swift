@@ -1,11 +1,16 @@
 import SwiftUI
 
 struct MainTabView: View {
+    @EnvironmentObject var audioManager: AudioPlayerManager
     @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
+    @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
     @State private var showFullPlayer = false
 
-    private var accentColor: Color {
-        (AccentOption(rawValue: accentRaw) ?? .indigo).color
+    private var effectiveAccent: Color {
+        if useDynamicColors, let dynamic = audioManager.dynamicArtworkColor {
+            return dynamic
+        }
+        return (AccentOption(rawValue: accentRaw) ?? .indigo).color
     }
 
     var body: some View {
@@ -26,7 +31,7 @@ struct MainTabView: View {
                 SettingsView()
                     .tabItem { Label("Ajustes", systemImage: "gearshape.fill") }
             }
-            .tint(accentColor)
+            .tint(effectiveAccent)
 
             VStack(spacing: 0) {
                 MiniPlayerView(showFullPlayer: $showFullPlayer)
