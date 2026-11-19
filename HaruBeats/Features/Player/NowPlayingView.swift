@@ -2,12 +2,16 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
+    @EnvironmentObject var playlistManager: PlaylistManager
     @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
     @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
-    @State private var dragProgress: Double? = nil
-    @State private var showLyrics: Bool = false
-    @State private var showEQSheet: Bool = false
-    @State private var showQueueSheet: Bool = false
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showLyrics = false
+    @State private var showEqualizer = false
+    @State private var showQueue = false
+    @State private var showSleepTimerSheet = false
+    @State private var showAddToPlaylistSheet = false
 
     private var effectiveAccent: Color {
         if useDynamicColors, let dynamic = audioManager.dynamicArtworkColor {
@@ -18,210 +22,205 @@ struct NowPlayingView: View {
 
     var body: some View {
         ZStack {
-            GeometryReader { geo in
-                if let song = audioManager.currentSong, let uiImage = song.artworkImage {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .blur(radius: 65)
-                        .overlay(
-                            LinearGradient(
-                                colors: [
-                                    effectiveAccent.opacity(useDynamicColors ? 0.32 : 0.12),
-                                    Color.black.opacity(showLyrics ? 0.78 : 0.62)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .clipped()
-                } else {
-                    LinearGradient(
-                        colors: [effectiveAccent.opacity(0.45), AppTheme.background],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-            }
-            .ignoresSafeArea()
+            backgroundGradient
+                .ignoresSafeArea()
 
-            if let song = audioManager.currentSong {
-                VStack(spacing: 14) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.35))
-                        .frame(width: 40, height: 5)
-                        .padding(.top, 14)
+            VStack(spacing: 16) {
+                topBar
 
+                if let song = audioManager.currentSong {
                     if showLyrics {
-                        lyricsHeaderView(for: song)
                         LyricsView()
-                            .frame(maxHeight: .infinity)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(.opacity)
                     } else {
-                        artworkStageView(for: song)
+                        artworkSection(for: song)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(.opacity)
                     }
 
-                    progressBarSection
-                    mainTransportControls
-                    bottomUtilityPills
+                    songHeaderSection(for: song)
+
+                    NowPlayingTimelineView(
+                        progress: audioManager.progress,
+                        audioManager: audioManager,
+                        accentColor: effectiveAccent
+                    )
+
+                    mainControlsSection
+                    bottomActionsBar(for: song)
                 }
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 20)
         }
-        .sheet(isPresented: $showEQSheet) {
+        .sheet(isPresented: $showEqualizer) {
             EqualizerSheetView()
         }
-        .sheet(isPresented: $showQueueSheet) {
+        .sheet(isPresented: $showQueue) {
             QueueSheetView()
         }
-    }
-
-    private func lyricsHeaderView(for song: Song) -> some View {
-        HStack(spacing: 12) {
-            Group {
-                if let uiImage = song.artworkImage {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    AppTheme.cardBackground
+        .sheet(isPresented: $showAddToPlaylistSheet) {
+            if let song = audioManager.currentSong {
+                PickPlaylistForSongSheet(song: song)
+            }
+        }
+        .confirmationDialog("Temporizador de apagado", isPresented: $showSleepTimerSheet, titleVisibility: .visible) {
+            Button("15 minutos") { audioManager.startSleepTimer(minutes: 15) }
+            Button("30 minutos") { audioManager.startSleepTimer(minutes: 30) }
+            Button("45 minutos") { audioManager.startSleepTimer(minutes: 45) }
+            Button("60 minutos") { audioManager.startSleepTimer(minutes: 60) }
+            Button("Al terminar esta canción") { audioManager.enableStopAfterCurrentSong() }
+            if audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong {
+                Button("Desactivar temporizador", role: .destructive) {
+                    audioManager.cancelSleepTimer()
                 }
             }
-            .frame(width: 48, height: 48)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(song.title)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(song.artist)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            lyricsToggleButton
+            Button("Cancelar", role: .cancel) {}
         }
-        .padding(.horizontal, 26)
-        .padding(.top, 4)
     }
 
-    private func artworkStageView(for song: Song) -> some View {
-        VStack(spacing: 12) {
-            HStack {
-                AudioVisualizerView(isPlaying: audioManager.isPlaying, accentColor: effectiveAccent)
-                Spacer()
-                lyricsToggleButton
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [
+                effectiveAccent.opacity(0.45),
+                AppTheme.background,
+                Color.black
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: 36, height: 36)
             }
-            .padding(.horizontal, 26)
 
             Spacer()
 
+            VStack(spacing: 2) {
+                Text("REPRODUCIENDO")
+                    .font(.caption2.weight(.bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.white.opacity(0.7))
+                if let song = audioManager.currentSong {
+                    Text(song.album)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                showQueue = true
+            } label: {
+                Image(systemName: "list.bullet")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: 36, height: 36)
+            }
+        }
+    }
+
+    private func artworkSection(for song: Song) -> some View {
+        VStack(spacing: 14) {
+            Spacer(minLength: 4)
             Group {
-                if let uiImage = song.artworkImage {
-                    Image(uiImage: uiImage)
+                if let img = song.artworkImage {
+                    Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
                 } else {
                     ZStack {
                         AppTheme.cardBackground
-                        Image(systemName: "waveform")
+                        Image(systemName: "music.note")
                             .font(.system(size: 72))
                             .foregroundStyle(effectiveAccent)
                     }
                 }
             }
-            .frame(width: 272, height: 272)
-            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .aspectRatio(1, contentMode: .fit)
+            .frame(maxWidth: 320, maxHeight: 320)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .scaleEffect(audioManager.isPlaying ? 1.0 : 0.93)
             .shadow(color: effectiveAccent.opacity(0.35), radius: 24, y: 12)
+            .animation(.spring(response: 0.4, dampingFraction: 0.75), value: audioManager.isPlaying)
 
-            VStack(spacing: 6) {
-                Text(song.title)
-                    .font(.title2.bold())
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
+            HStack(spacing: 8) {
+                Text(song.audioQualityBadge)
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.12))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .clipShape(Capsule())
 
-                Text("\(song.artist) · \(song.album)")
-                    .font(.subheadline)
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .lineLimit(1)
-
-                // Insignia de calidad de audio (Hi-Res / Lossless / Sample Rate)
-                HStack(spacing: 5) {
-                    if song.isHiRes {
-                        Image(systemName: "hifispeaker.fill")
-                            .font(.caption2)
-                    }
-                    Text(song.audioQualityBadge)
-                        .font(.caption2.monospacedDigit().weight(.bold))
+                if audioManager.isReplayGainEnabled, let rg = song.replayGainDB {
+                    Text(String(format: "RG %+.1f dB", rg))
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(effectiveAccent.opacity(0.25))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(song.isHiRes ? effectiveAccent.opacity(0.32) : Color.white.opacity(0.12))
-                .foregroundStyle(song.isHiRes ? .white : AppTheme.secondaryText)
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(song.isHiRes ? effectiveAccent.opacity(0.75) : Color.clear, lineWidth: 0.8)
-                )
-                .padding(.top, 2)
             }
-            .padding(.horizontal, 24)
+            Spacer(minLength: 4)
+        }
+    }
+
+    private func songHeaderSection(for song: Song) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(song.title)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(song.artist)
+                    .font(.body)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(1)
+            }
 
             Spacer()
-        }
-    }
 
-    private var progressBarSection: some View {
-        VStack(spacing: 6) {
-            let safeDuration = max(audioManager.duration, 1)
-
-            Slider(
-                value: Binding(
-                    get: {
-                        dragProgress ?? min(max(audioManager.currentTime, 0), safeDuration)
-                    },
-                    set: { newValue in
-                        audioManager.isScrubbing = true
-                        dragProgress = newValue
-                    }
-                ),
-                in: 0...safeDuration,
-                onEditingChanged: { editing in
-                    if !editing {
-                        if let target = dragProgress {
-                            audioManager.seek(to: target)
-                        }
-                        dragProgress = nil
-                        audioManager.isScrubbing = false
-                    }
-                }
-            )
-            .tint(.white)
-
-            HStack {
-                let displayedTime = dragProgress ?? audioManager.currentTime
-                Text(formatTime(displayedTime))
-                Spacer()
-                Text("-\(formatTime(max(safeDuration - displayedTime, 0)))")
+            Button {
+                playlistManager.toggleFavorite(song: song)
+            } label: {
+                let isFav = playlistManager.isFavorite(song: song)
+                Image(systemName: isFav ? "heart.fill" : "heart")
+                    .font(.title2)
+                    .foregroundStyle(isFav ? effectiveAccent : .white.opacity(0.7))
             }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(AppTheme.secondaryText)
+
+            Button {
+                showAddToPlaylistSheet = true
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.title2)
+                    .foregroundStyle(.white.opacity(0.75))
+            }
         }
-        .padding(.horizontal, 28)
     }
 
-    private var mainTransportControls: some View {
-        HStack(spacing: 34) {
+    private var mainControlsSection: some View {
+        HStack(spacing: 30) {
             Button {
                 audioManager.isShuffle.toggle()
             } label: {
                 Image(systemName: "shuffle")
                     .font(.title3)
-                    .foregroundStyle(audioManager.isShuffle ? effectiveAccent : .white.opacity(0.7))
+                    .foregroundStyle(audioManager.isShuffle ? effectiveAccent : .white.opacity(0.65))
             }
 
             Button {
@@ -235,9 +234,15 @@ struct NowPlayingView: View {
             Button {
                 audioManager.togglePlayPause()
             } label: {
-                Image(systemName: audioManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 70))
-                    .foregroundStyle(.white)
+                ZStack {
+                    Circle()
+                        .fill(effectiveAccent)
+                        .frame(width: 68, height: 68)
+                    Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title.weight(.bold))
+                        .foregroundStyle(.white)
+                        .offset(x: audioManager.isPlaying ? 0 : 2)
+                }
             }
 
             Button {
@@ -251,97 +256,122 @@ struct NowPlayingView: View {
             Button {
                 audioManager.isRepeatOne.toggle()
             } label: {
-                Image(systemName: audioManager.isRepeatOne ? "repeat.1" : "repeat")
+                Image(systemName: "repeat.1")
                     .font(.title3)
-                    .foregroundStyle(audioManager.isRepeatOne ? effectiveAccent : .white.opacity(0.7))
+                    .foregroundStyle(audioManager.isRepeatOne ? effectiveAccent : .white.opacity(0.65))
             }
         }
+        .padding(.vertical, 4)
     }
 
-    private var bottomUtilityPills: some View {
-        HStack(spacing: 14) {
+    private func bottomActionsBar(for song: Song) -> some View {
+        HStack {
             Button {
-                showEQSheet = true
-            } label: {
-                Label(audioManager.isEQEnabled ? audioManager.selectedPreset.rawValue : "EQ Off", systemImage: "slider.vertical.3")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.14))
-                    .foregroundStyle(.white)
-                    .clipShape(Capsule())
-            }
-
-            Menu {
-                Button("15 minutos") { audioManager.startSleepTimer(minutes: 15) }
-                Button("30 minutos") { audioManager.startSleepTimer(minutes: 30) }
-                Button("45 minutos") { audioManager.startSleepTimer(minutes: 45) }
-                Button("60 minutos") { audioManager.startSleepTimer(minutes: 60) }
-                Button("Al terminar esta canción") { audioManager.enableStopAfterCurrentSong() }
-                if audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong {
-                    Divider()
-                    Button("Desactivar temporizador", role: .destructive) {
-                        audioManager.cancelSleepTimer()
-                    }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    showLyrics.toggle()
                 }
             } label: {
-                Label(sleepTimerLabel, systemImage: "moon.zzz.fill")
+                let hasLyr = audioManager.songsWithLyrics.contains(song.relativePath)
+                Label("Letra", systemImage: showLyrics ? "quote.bubble.fill" : "quote.bubble")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(isSleepTimerActive ? effectiveAccent.opacity(0.45) : Color.white.opacity(0.14))
+                    .padding(.vertical, 7)
+                    .background(showLyrics ? effectiveAccent : (hasLyr ? Color.white.opacity(0.16) : Color.white.opacity(0.08)))
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
             }
 
+            Spacer()
+
             Button {
-                showQueueSheet = true
+                showEqualizer = true
             } label: {
-                Label("Cola", systemImage: "list.bullet")
+                Label("EQ", systemImage: "slider.vertical.3")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.14))
+                    .padding(.vertical, 7)
+                    .background(audioManager.isEQEnabled ? Color.white.opacity(0.16) : Color.white.opacity(0.08))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+
+            Spacer()
+
+            Button {
+                showSleepTimerSheet = true
+            } label: {
+                let activeTimer = audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong
+                Label(sleepTimerLabel, systemImage: activeTimer ? "moon.zzz.fill" : "moon.zzz")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(activeTimer ? effectiveAccent.opacity(0.45) : Color.white.opacity(0.12))
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
             }
         }
-        .padding(.bottom, 16)
-    }
-
-    private var isSleepTimerActive: Bool {
-        audioManager.sleepTimerRemaining != nil || audioManager.stopAfterCurrentSong
     }
 
     private var sleepTimerLabel: String {
-        if audioManager.stopAfterCurrentSong { return "Fin pista" }
+        if audioManager.stopAfterCurrentSong {
+            return "Fin pista"
+        }
         if let rem = audioManager.sleepTimerRemaining {
-            let mins = Int(rem) / 60
-            let secs = Int(rem) % 60
-            return String(format: "%d:%02d", mins, secs)
+            let mins = Int(ceil(rem / 60))
+            return "\(mins)m"
         }
         return "Timer"
     }
+}
 
-    private var lyricsToggleButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                showLyrics.toggle()
+private struct NowPlayingTimelineView: View {
+    @ObservedObject var progress: PlaybackProgress
+    @ObservedObject var audioManager: AudioPlayerManager
+    let accentColor: Color
+
+    @State private var dragTime: TimeInterval = 0
+
+    var body: some View {
+        let safeDuration = max(progress.duration, 1)
+        let displayedTime = audioManager.isScrubbing ? dragTime : progress.currentTime
+
+        VStack(spacing: 6) {
+            Slider(
+                value: Binding(
+                    get: { min(max(displayedTime, 0), safeDuration) },
+                    set: { newValue in
+                        dragTime = newValue
+                        if !audioManager.isScrubbing {
+                            audioManager.isScrubbing = true
+                        }
+                    }
+                ),
+                in: 0...safeDuration,
+                onEditingChanged: { editing in
+                    if editing {
+                        dragTime = progress.currentTime
+                        audioManager.isScrubbing = true
+                    } else {
+                        audioManager.seek(to: dragTime)
+                        audioManager.isScrubbing = false
+                    }
+                }
+            )
+            .tint(accentColor)
+
+            HStack {
+                Text(formatTime(displayedTime))
+                Spacer()
+                Text("-\(formatTime(max(progress.duration - displayedTime, 0)))")
             }
-        } label: {
-            Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(showLyrics ? .white : .white.opacity(0.85))
-                .frame(width: 38, height: 38)
-                .background(showLyrics ? effectiveAccent.opacity(0.45) : Color.white.opacity(0.12))
-                .clipShape(Circle())
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.7))
         }
     }
 
     private func formatTime(_ seconds: TimeInterval) -> String {
-        guard !seconds.isNaN, seconds.isFinite else { return "0:00" }
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return String(format: "%d:%02d", mins, secs)
+        guard seconds.isFinite && seconds >= 0 else { return "0:00" }
+        let total = Int(seconds)
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
