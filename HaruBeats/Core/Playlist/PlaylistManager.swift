@@ -53,9 +53,13 @@ final class PlaylistManager: ObservableObject {
         return newPlaylist
     }
 
-    func deletePlaylist(_ playlist: Playlist) {
-        playlists.removeAll { $0.id == playlist.id }
+    func deletePlaylist(id: UUID) {
+        playlists.removeAll { $0.id == id }
         savePlaylists()
+    }
+
+    func deletePlaylist(_ playlist: Playlist) {
+        deletePlaylist(id: playlist.id)
     }
 
     func deletePlaylists(at offsets: IndexSet) {
@@ -75,7 +79,7 @@ final class PlaylistManager: ObservableObject {
         renamePlaylist(id: playlist.id, newName: newName)
     }
 
-    // MARK: - Gestión de Canciones en Playlists (Compatible v1.0 + relativePath v1.1)
+    // MARK: - Gestión de Canciones en Playlists
 
     func addSongs(_ songs: [Song], to playlistID: UUID) {
         guard !songs.isEmpty,
@@ -178,7 +182,8 @@ final class PlaylistManager: ObservableObject {
             if hasAccess { url.stopAccessingSecurityScopedResource() }
         }
 
-        let matchedSongs = M3U8Parser.parseAndResolve(url: url, library: library)
+        let result = M3U8Parser.parseAndResolve(url: url, library: library)
+        let matchedSongs = result.matchedSongs
         let playlistName = url.deletingPathExtension().lastPathComponent
         if !matchedSongs.isEmpty {
             createOrAppendPlaylist(name: playlistName, songs: matchedSongs)

@@ -98,7 +98,7 @@ struct LibraryView: View {
     @ViewBuilder
     private var contentView: some View {
         let songs = filteredSongs
-        if audioManager.isLoadingLibrary && audioManager.library.isEmpty {
+        if audioManager.isScanningLibrary && audioManager.library.isEmpty {
             VStack(spacing: 12) {
                 ProgressView()
                     .tint(effectiveAccent)
@@ -144,7 +144,10 @@ struct LibraryView: View {
             }
             .onDelete { offsets in
                 for index in offsets {
-                    audioManager.deleteSong(songs[index])
+                    let target = songs[index]
+                    Task {
+                        await audioManager.deleteSong(target)
+                    }
                 }
             }
         }
@@ -156,7 +159,7 @@ struct LibraryView: View {
         HStack(spacing: 12) {
             Button {
                 if let first = songs.first {
-                    audioManager.play(song: first, in: songs)
+                    audioManager.play(song: first, inQueue: songs)
                 }
             } label: {
                 Label("Reproducir todo", systemImage: "play.fill")
@@ -172,7 +175,7 @@ struct LibraryView: View {
             Button {
                 audioManager.isShuffle = true
                 if let randomSong = songs.randomElement() {
-                    audioManager.play(song: randomSong, in: songs)
+                    audioManager.play(song: randomSong, inQueue: songs)
                 }
             } label: {
                 Label("Aleatorio", systemImage: "shuffle")
@@ -200,11 +203,11 @@ struct LibraryView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            audioManager.play(song: song, in: songs)
+            audioManager.play(song: song, inQueue: songs)
         }
         .contextMenu {
             Button {
-                audioManager.playNextInQueue(song)
+                audioManager.enqueueNext(song)
             } label: {
                 Label("Reproducir a continuación", systemImage: "text.line.first.and.arrowtriangle.forward")
             }
@@ -231,7 +234,9 @@ struct LibraryView: View {
             Divider()
 
             Button(role: .destructive) {
-                audioManager.deleteSong(song)
+                Task {
+                    await audioManager.deleteSong(song)
+                }
             } label: {
                 Label("Eliminar archivo", systemImage: "trash")
             }
@@ -345,59 +350,5 @@ struct SongRowItemView: View, Equatable {
                 .foregroundStyle(AppTheme.secondaryText)
         }
         .padding(.vertical, 2)
-    }
-}
-
-struct PickPlaylistForSongSheet: View {
-    @EnvironmentObject var playlistManager: PlaylistManager
-    @Environment(\.dismiss) private var dismiss
-    let song: Song
-
-    @State private var newPlaylistName = ""
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("Crear nueva playlist") {
-                    HStack {
-                        TextField("Nombre de la playlist", text: $newPlaylistName)
-                        Button("Crear") {
-                            let trimmed = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !trimmed.isEmpty else { return }
-                            playlistManager.createPlaylist(name: trimmed, songs: [song])
-                            dismiss()
-                        }
-                        .disabled(newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-
-                if !playlistManager.playlists.isEmpty {
-                    Section("Tus playlists") {
-                        ForEach(playlistManager.playlists) { playlist in
-                            Button {
-                                playlistManager.addSongs([song], to: playlist.id)
-                                dismiss()
-                            } label: {
-                                HStack {
-                                    Text(playlist.name)
-                                        .foregroundStyle(.white)
-                                    Spacer()
-                                    Text("\(playlist.songFileNames.count)")
-                                        .font(.caption)
-                                        .foregroundStyle(AppTheme.secondaryText)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Agregar a playlist")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancelar") { dismiss() }
-                }
-            }
-        }
     }
 }

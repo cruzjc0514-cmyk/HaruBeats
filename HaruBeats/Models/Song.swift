@@ -226,3 +226,11 @@ struct Song: Identifiable, Hashable {
         )
     }
 }
+
+extension Song {
+    var formattedDuration: String {
+        guard duration.isFinite, duration > 0 else { return "0:00" }
+        let total = Int(duration.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
