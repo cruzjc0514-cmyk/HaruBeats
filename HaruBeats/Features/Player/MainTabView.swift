@@ -4,7 +4,7 @@ struct MainTabView: View {
     @EnvironmentObject var audioManager: AudioPlayerManager
     @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
     @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
-    @State private var showFullPlayer = false
+    @State private var showNowPlaying = false
 
     private var effectiveAccent: Color {
         if useDynamicColors, let dynamic = audioManager.dynamicArtworkColor {
@@ -17,28 +17,39 @@ struct MainTabView: View {
         ZStack(alignment: .bottom) {
             TabView {
                 HomeView()
-                    .tabItem { Label("Inicio", systemImage: "house.fill") }
-
-                AlbumsView()
-                    .tabItem { Label("Álbumes", systemImage: "square.stack.fill") }
-
-                PlaylistsView()
-                    .tabItem { Label("Playlists", systemImage: "music.note.list") }
+                    .tabItem {
+                        Label("Inicio", systemImage: "house.fill")
+                    }
 
                 LibraryView()
-                    .tabItem { Label("Biblioteca", systemImage: "music.note") }
+                    .tabItem {
+                        Label("Biblioteca", systemImage: "music.note.list")
+                    }
+
+                AlbumsView()
+                    .tabItem {
+                        Label("Álbumes", systemImage: "square.stack.fill")
+                    }
+
+                PlaylistsView()
+                    .tabItem {
+                        Label("Playlists", systemImage: "text.badge.star")
+                    }
 
                 SettingsView()
-                    .tabItem { Label("Ajustes", systemImage: "gearshape.fill") }
+                    .tabItem {
+                        Label("Ajustes", systemImage: "gearshape.fill")
+                    }
             }
             .tint(effectiveAccent)
 
-            VStack(spacing: 0) {
-                MiniPlayerView(showFullPlayer: $showFullPlayer)
-                    .padding(.bottom, 56)
+            if audioManager.currentSong != nil {
+                MiniPlayerView(showNowPlaying: $showNowPlaying)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 54)
             }
         }
-        .sheet(isPresented: $showFullPlayer) {
+        .fullScreenCover(isPresented: $showNowPlaying) {
             NowPlayingView()
         }
     }

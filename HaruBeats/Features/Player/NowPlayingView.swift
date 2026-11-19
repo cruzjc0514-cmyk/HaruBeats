@@ -195,9 +195,9 @@ struct NowPlayingView: View {
             Spacer()
 
             Button {
-                playlistManager.toggleFavorite(song: song)
+                playlistManager.toggleFavorite(song)
             } label: {
-                let isFav = playlistManager.isFavorite(song: song)
+                let isFav = playlistManager.isFavorite(song)
                 Image(systemName: isFav ? "heart.fill" : "heart")
                     .font(.title2)
                     .foregroundStyle(isFav ? effectiveAccent : .white.opacity(0.7))
