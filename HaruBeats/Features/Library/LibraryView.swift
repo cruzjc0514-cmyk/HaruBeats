@@ -1,9 +1,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum LibraryBrowseMode: String, CaseIterable, Identifiable {
-    case songs = "Canciones"
-    case artists = "Artistas"
+enum LibrarySortOption: String, CaseIterable, Identifiable {
+    case title = "Título"
+    case artist = "Artista"
+    case album = "Álbum"
+    case recent = "Recientes"
+
     var id: String { rawValue }
 }
 
@@ -13,11 +16,10 @@ struct LibraryView: View {
     @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
     @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
 
-    @State private var browseMode: LibraryBrowseMode = .songs
-    @State private var showFileImporter = false
     @State private var searchText = ""
+    @State private var sortOption: LibrarySortOption = .title
+    @State private var showFileImporter = false
     @State private var songToAddToPlaylist: Song? = nil
-    @State private var songToDelete: Song? = nil
 
     private var effectiveAccent: Color {
         if useDynamicColors, let dynamic = audioManager.dynamicArtworkColor {
@@ -26,242 +28,263 @@ struct LibraryView: View {
         return (AccentOption(rawValue: accentRaw) ?? .indigo).color
     }
 
-    var filteredSongs: [Song] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty { return audioManager.library }
-        return audioManager.library.filter {
-            $0.title.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil ||
-            $0.artist.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil ||
-            $0.album.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    private var filteredSongs: [Song] {
+        let base: [Song]
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            base = audioManager.library
+        } else {
+            let query = searchText.lowercased()
+            base = audioManager.library.filter {
+                $0.title.lowercased().contains(query)
+                || $0.artist.lowercased().contains(query)
+                || $0.album.lowercased().contains(query)
+            }
         }
-    }
 
-    var groupedArtists: [(artist: String, songs: [Song])] {
-        let grouped = Dictionary(grouping: filteredSongs) { $0.artist }
-        return grouped
-            .map { (artist: $0.key, songs: $0.value) }
-            .sorted { $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending }
+        switch sortOption {
+        case .title:
+            return base.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case .artist:
+            return base.sorted {
+                if $0.artist != $1.artist {
+                    return $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending
+                }
+                return $0.trackNumber < $1.trackNumber
+            }
+        case .album:
+            return base.sorted {
+                if $0.album != $1.album {
+                    return $0.album.localizedCaseInsensitiveCompare($1.album) == .orderedAscending
+                }
+                if $0.discNumber != $1.discNumber {
+                    return $0.discNumber < $1.discNumber
+                }
+                return $0.trackNumber < $1.trackNumber
+            }
+        case .recent:
+            return base
+        }
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Modo", selection: $browseMode) {
-                    ForEach(LibraryBrowseMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+            contentView
                 .background(AppTheme.background)
-
-                if audioManager.isScanningLibrary && audioManager.library.isEmpty {
-                    ProgressView("Indexando biblioteca...")
-                        .tint(effectiveAccent)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(AppTheme.background)
-                } else if browseMode == .songs {
-                    songsListView
-                } else {
-                    artistsListView
-                }
-            }
-            .background(AppTheme.background)
-            .navigationTitle("Biblioteca")
-            .searchable(text: $searchText, prompt: "Buscar título, artista o álbum")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showFileImporter = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(effectiveAccent)
+                .navigationTitle("Biblioteca")
+                .searchable(text: $searchText, prompt: "Buscar canción, artista o álbum")
+                .toolbar {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        sortMenu
+                        importButton
                     }
                 }
-            }
-            .fileImporter(
-                isPresented: $showFileImporter,
-                allowedContentTypes: [.audio, .plainText, .data],
-                allowsMultipleSelection: true
-            ) { result in
-                if case .success(let urls) = result {
-                    Task { await audioManager.importFiles(urls: urls) }
+                .fileImporter(
+                    isPresented: $showFileImporter,
+                    allowedContentTypes: [
+                        .audio,
+                        UTType(filenameExtension: "flac") ?? .audio,
+                        UTType(filenameExtension: "lrc") ?? .plainText,
+                        .plainText
+                    ],
+                    allowsMultipleSelection: true,
+                    onCompletion: handleImportedFiles
+                )
+                .sheet(item: $songToAddToPlaylist) { song in
+                    PickPlaylistForSongSheet(song: song)
                 }
-            }
-            .sheet(item: $songToAddToPlaylist) { song in
-                PickPlaylistForSongSheet(song: song)
-            }
-            .alert("Eliminar canción", isPresented: Binding(
-                get: { songToDelete != nil },
-                set: { if !$0 { songToDelete = nil } }
-            )) {
-                Button("Eliminar", role: .destructive) {
-                    if let target = songToDelete {
-                        playlistManager.purgeSongFromAllPlaylists(fileName: target.fileURL.lastPathComponent)
-                        Task { await audioManager.deleteSong(target) }
-                    }
-                }
-                Button("Cancelar", role: .cancel) {}
-            } message: {
-                Text("Se eliminará '\(songToDelete?.title ?? "")' del iPhone y de todas tus playlists.")
-            }
         }
     }
 
-    private var songsListView: some View {
+    @ViewBuilder
+    private var contentView: some View {
+        let songs = filteredSongs
+        if audioManager.isLoadingLibrary && audioManager.library.isEmpty {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .tint(effectiveAccent)
+                Text("Escaneando biblioteca...")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if songs.isEmpty {
+            emptyStateView
+        } else {
+            songsListView(songs: songs)
+        }
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "music.note.house")
+                .font(.system(size: 48))
+                .foregroundStyle(effectiveAccent)
+            Text(audioManager.library.isEmpty ? "Tu biblioteca está vacía" : "Sin resultados")
+                .font(.headline)
+                .foregroundStyle(.white)
+            Text(audioManager.library.isEmpty
+                 ? "Importa archivos FLAC, MP3, M4A o LRC con el botón + de arriba o desde Transferencia Wi-Fi en Ajustes."
+                 : "Prueba con otro término de búsqueda.")
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func songsListView(songs: [Song]) -> some View {
         List {
-            if filteredSongs.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "music.note.house.fill")
-                        .font(.system(size: 40))
-                        .foregroundStyle(effectiveAccent)
-                    Text("No hay canciones todavía")
-                        .font(.headline)
-                    Text("Toca el botón + arriba a la derecha para importar tus archivos FLAC, MP3 o M4A.")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
+            quickActionHeader(songs: songs)
                 .listRowBackground(Color.clear)
-            } else {
-                ForEach(filteredSongs) { song in
-                    LibrarySongRow(
-                        song: song,
-                        isCurrent: audioManager.currentSong?.relativePath == song.relativePath,
-                        hasLyrics: audioManager.songsWithLyrics.contains(song.relativePath),
-                        accentColor: effectiveAccent,
-                        onTap: {
-                            audioManager.play(song: song, inQueue: filteredSongs)
-                        },
-                        onPlayNext: {
-                            audioManager.enqueueNext(song)
-                        },
-                        onAddToPlaylist: {
-                            songToAddToPlaylist = song
-                        },
-                        onDelete: {
-                            songToDelete = song
-                        }
-                    )
-                    .listRowBackground(AppTheme.cardBackground)
-                }
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .background(AppTheme.background)
-    }
+                .listRowSeparator(.hidden)
 
-    private var artistsListView: some View {
-        List {
-            ForEach(groupedArtists, id: \.artist) { group in
-                NavigationLink(destination: ArtistDetailView(artistName: group.artist, songs: group.songs)) {
-                    HStack(spacing: 12) {
-                        Circle()
-                            .fill(AppTheme.elevatedBackground)
-                            .frame(width: 44, height: 44)
-                            .overlay {
-                                if let img = group.songs.first?.thumbnailImage {
-                                    Image(uiImage: img)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .clipShape(Circle())
-                                } else {
-                                    Image(systemName: "person.fill")
-                                        .foregroundStyle(effectiveAccent)
-                                }
-                            }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(group.artist)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(.white)
-                            Text("\(group.songs.count) canciones")
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.secondaryText)
-                        }
-                    }
-                }
-                .listRowBackground(AppTheme.cardBackground)
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .background(AppTheme.background)
-    }
-}
-
-private struct ArtistDetailView: View {
-    let artistName: String
-    let songs: [Song]
-    @EnvironmentObject var audioManager: AudioPlayerManager
-    @AppStorage("hb_accent_color") private var accentRaw = AccentOption.indigo.rawValue
-    @AppStorage("hb_dynamic_colors") private var useDynamicColors = true
-
-    private var effectiveAccent: Color {
-        if useDynamicColors, let dynamic = audioManager.dynamicArtworkColor {
-            return dynamic
-        }
-        return (AccentOption(rawValue: accentRaw) ?? .indigo).color
-    }
-
-    var body: some View {
-        List {
             ForEach(songs) { song in
-                let isCurrent = audioManager.currentSong?.relativePath == song.relativePath
-                HStack(spacing: 12) {
-                    Group {
-                        if let img = song.thumbnailImage {
-                            Image(uiImage: img)
-                                .resizable()
-                                .scaledToFill()
-                        } else {
-                            ZStack {
-                                AppTheme.elevatedBackground
-                                Image(systemName: "music.note")
-                                    .foregroundStyle(effectiveAccent)
-                            }
-                        }
-                    }
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(song.title)
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(isCurrent ? effectiveAccent : .white)
-                            .lineLimit(1)
-                        Text(song.album)
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.secondaryText)
-                            .lineLimit(1)
-                    }
-                    Spacer()
+                songRow(song: song, songs: songs)
+            }
+            .onDelete { offsets in
+                for index in offsets {
+                    audioManager.deleteSong(songs[index])
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    audioManager.play(song: song, inQueue: songs)
-                }
-                .listRowBackground(AppTheme.cardBackground)
             }
         }
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(AppTheme.background)
-        .navigationTitle(artistName)
+    }
+
+    private func quickActionHeader(songs: [Song]) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                if let first = songs.first {
+                    audioManager.play(song: first, in: songs)
+                }
+            } label: {
+                Label("Reproducir todo", systemImage: "play.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(effectiveAccent)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                audioManager.isShuffle = true
+                if let randomSong = songs.randomElement() {
+                    audioManager.play(song: randomSong, in: songs)
+                }
+            } label: {
+                Label("Aleatorio", systemImage: "shuffle")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(AppTheme.cardBackground)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func songRow(song: Song, songs: [Song]) -> some View {
+        let isCurrent = audioManager.currentSong?.relativePath == song.relativePath
+        let hasLyrics = audioManager.songsWithLyrics.contains(song.relativePath)
+
+        return SongRowItemView(
+            song: song,
+            isCurrent: isCurrent,
+            isPlaying: isCurrent && audioManager.isPlaying,
+            hasLyrics: hasLyrics,
+            accentColor: effectiveAccent
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            audioManager.play(song: song, in: songs)
+        }
+        .contextMenu {
+            Button {
+                audioManager.playNextInQueue(song)
+            } label: {
+                Label("Reproducir a continuación", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+
+            Button {
+                audioManager.appendToQueue(song)
+            } label: {
+                Label("Agregar a la cola", systemImage: "text.append")
+            }
+
+            Button {
+                songToAddToPlaylist = song
+            } label: {
+                Label("Agregar a playlist...", systemImage: "plus.circle")
+            }
+
+            Button {
+                playlistManager.toggleFavorite(song)
+            } label: {
+                let fav = playlistManager.isFavorite(song)
+                Label(fav ? "Quitar de favoritos" : "Marcar como favorita", systemImage: fav ? "heart.slash" : "heart")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                audioManager.deleteSong(song)
+            } label: {
+                Label("Eliminar archivo", systemImage: "trash")
+            }
+        }
+        .listRowBackground(Color.clear)
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Ordenar por", selection: $sortOption) {
+                ForEach(LibrarySortOption.allCases) { opt in
+                    Text(opt.rawValue).tag(opt)
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down.circle")
+                .foregroundStyle(effectiveAccent)
+        }
+    }
+
+    private var importButton: some View {
+        Button {
+            showFileImporter = true
+        } label: {
+            Image(systemName: "plus.circle.fill")
+                .font(.title3)
+                .foregroundStyle(effectiveAccent)
+        }
+    }
+
+    private func handleImportedFiles(_ result: Result<[URL], Error>) {
+        if case .success(let urls) = result {
+            Task {
+                await audioManager.importFiles(urls: urls)
+            }
+        }
     }
 }
 
-private struct LibrarySongRow: View {
+struct SongRowItemView: View, Equatable {
     let song: Song
     let isCurrent: Bool
+    let isPlaying: Bool
     let hasLyrics: Bool
     let accentColor: Color
-    let onTap: () -> Void
-    let onPlayNext: () -> Void
-    let onAddToPlaylist: () -> Void
-    let onDelete: () -> Void
+
+    static func == (lhs: SongRowItemView, rhs: SongRowItemView) -> Bool {
+        lhs.song.relativePath == rhs.song.relativePath &&
+        lhs.isCurrent == rhs.isCurrent &&
+        lhs.isPlaying == rhs.isPlaying &&
+        lhs.hasLyrics == rhs.hasLyrics &&
+        lhs.accentColor == rhs.accentColor
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -272,7 +295,7 @@ private struct LibrarySongRow: View {
                         .scaledToFill()
                 } else {
                     ZStack {
-                        AppTheme.elevatedBackground
+                        AppTheme.cardBackground
                         Image(systemName: "music.note")
                             .foregroundStyle(accentColor)
                     }
@@ -286,40 +309,94 @@ private struct LibrarySongRow: View {
                     .font(.body.weight(.medium))
                     .foregroundStyle(isCurrent ? accentColor : .white)
                     .lineLimit(1)
-                Text("\(song.artist) · \(song.album)")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text(song.artist)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(1)
+
+                    if song.isHiRes {
+                        Text(song.codec)
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(accentColor.opacity(0.2))
+                            .foregroundStyle(accentColor)
+                            .clipShape(Capsule())
+                    }
+
+                    if hasLyrics {
+                        Text("LRC")
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.white.opacity(0.12))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .clipShape(Capsule())
+                    }
+                }
             }
 
             Spacer()
 
-            if hasLyrics {
-                Image(systemName: "quote.bubble")
-                    .font(.caption2)
-                    .foregroundStyle(AppTheme.secondaryText)
-            }
-
-            if isCurrent {
-                Image(systemName: "waveform")
-                    .foregroundStyle(accentColor)
-            }
+            Text(song.formattedDuration)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(AppTheme.secondaryText)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
-        .contextMenu {
-            Button(action: onTap) {
-                Label("Reproducir ahora", systemImage: "play.fill")
+        .padding(.vertical, 2)
+    }
+}
+
+struct PickPlaylistForSongSheet: View {
+    @EnvironmentObject var playlistManager: PlaylistManager
+    @Environment(\.dismiss) private var dismiss
+    let song: Song
+
+    @State private var newPlaylistName = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Crear nueva playlist") {
+                    HStack {
+                        TextField("Nombre de la playlist", text: $newPlaylistName)
+                        Button("Crear") {
+                            let trimmed = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return }
+                            playlistManager.createPlaylist(name: trimmed, songs: [song])
+                            dismiss()
+                        }
+                        .disabled(newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+
+                if !playlistManager.playlists.isEmpty {
+                    Section("Tus playlists") {
+                        ForEach(playlistManager.playlists) { playlist in
+                            Button {
+                                playlistManager.addSongs([song], to: playlist.id)
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Text(playlist.name)
+                                        .foregroundStyle(.white)
+                                    Spacer()
+                                    Text("\(playlist.songFileNames.count)")
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            Button(action: onPlayNext) {
-                Label("Reproducir a continuación", systemImage: "text.insert")
-            }
-            Button(action: onAddToPlaylist) {
-                Label("Agregar a playlist", systemImage: "text.badge.plus")
-            }
-            Divider()
-            Button(role: .destructive, action: onDelete) {
-                Label("Eliminar canción", systemImage: "trash")
+            .navigationTitle("Agregar a playlist")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancelar") { dismiss() }
+                }
             }
         }
     }

@@ -38,7 +38,7 @@ final class PlaylistManager: ObservableObject {
         library.filter { isFavorite($0) }
     }
 
-    // MARK: - Gestión de Playlists
+    // MARK: - Creación, Edición y Borrado de Playlists
 
     @discardableResult
     func createPlaylist(name: String, songs: [Song] = []) -> Playlist {
@@ -63,26 +63,57 @@ final class PlaylistManager: ObservableObject {
         savePlaylists()
     }
 
-    func renamePlaylist(_ playlist: Playlist, newName: String) {
+    func renamePlaylist(id: UUID, newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+              let idx = playlists.firstIndex(where: { $0.id == id }) else { return }
         playlists[idx].name = trimmed
         savePlaylists()
     }
 
-    func addSong(_ song: Song, to playlist: Playlist) {
-        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
-        let key = song.relativePath
-        if !playlists[idx].songFileNames.contains(key) {
-            playlists[idx].songFileNames.append(key)
-            savePlaylists()
+    func renamePlaylist(_ playlist: Playlist, newName: String) {
+        renamePlaylist(id: playlist.id, newName: newName)
+    }
+
+    // MARK: - Gestión de Canciones en Playlists (Compatible v1.0 + relativePath v1.1)
+
+    func addSongs(_ songs: [Song], to playlistID: UUID) {
+        guard !songs.isEmpty,
+              let idx = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        var existing = Set(playlists[idx].songFileNames)
+        for song in songs {
+            if existing.insert(song.relativePath).inserted {
+                playlists[idx].songFileNames.append(song.relativePath)
+            }
         }
+        savePlaylists()
+    }
+
+    func addSong(_ song: Song, to playlist: Playlist) {
+        addSongs([song], to: playlist.id)
+    }
+
+    func removeSongs(at offsets: IndexSet, from playlistID: UUID) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        playlists[idx].songFileNames.remove(atOffsets: offsets)
+        savePlaylists()
     }
 
     func removeSong(at offsets: IndexSet, from playlist: Playlist) {
-        guard let idx = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
-        playlists[idx].songFileNames.remove(atOffsets: offsets)
+        removeSongs(at: offsets, from: playlist.id)
+    }
+
+    func removeSongByFileName(_ keyOrFileName: String, from playlistID: UUID) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        playlists[idx].songFileNames.removeAll { saved in
+            saved == keyOrFileName || URL(fileURLWithPath: saved).lastPathComponent == keyOrFileName
+        }
+        savePlaylists()
+    }
+
+    func moveSongs(from source: IndexSet, to destination: Int, in playlistID: UUID) {
+        guard let idx = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        playlists[idx].songFileNames.move(fromOffsets: source, toOffset: destination)
         savePlaylists()
     }
 
@@ -106,13 +137,7 @@ final class PlaylistManager: ObservableObject {
         guard !trimmed.isEmpty, !songs.isEmpty else { return }
 
         if let idx = playlists.firstIndex(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
-            var existing = Set(playlists[idx].songFileNames)
-            for song in songs {
-                if existing.insert(song.relativePath).inserted {
-                    playlists[idx].songFileNames.append(song.relativePath)
-                }
-            }
-            savePlaylists()
+            addSongs(songs, to: playlists[idx].id)
         } else {
             createPlaylist(name: trimmed, songs: songs)
         }
@@ -120,7 +145,7 @@ final class PlaylistManager: ObservableObject {
 
     // MARK: - Resolución y Migración (v1.0 lastPathComponent -> v1.1 relativePath)
 
-    func songs(for playlist: Playlist, in library: [Song]) -> [Song] {
+    func resolvedSongs(for playlist: Playlist, in library: [Song]) -> [Song] {
         var byRelativePath: [String: Song] = [:]
         var byFileName: [String: Song] = [:]
 
@@ -140,6 +165,10 @@ final class PlaylistManager: ObservableObject {
         return resolved
     }
 
+    func songs(for playlist: Playlist, in library: [Song]) -> [Song] {
+        resolvedSongs(for: playlist, in: library)
+    }
+
     // MARK: - Importación M3U / M3U8
 
     @discardableResult
@@ -149,37 +178,7 @@ final class PlaylistManager: ObservableObject {
             if hasAccess { url.stopAccessingSecurityScopedResource() }
         }
 
-        let entries = M3U8Parser.parse(url: url)
-        guard !entries.isEmpty else { return 0 }
-
-        var byRelativePath: [String: Song] = [:]
-        var byFileName: [String: Song] = [:]
-
-        for song in library {
-            byRelativePath[song.relativePath.lowercased()] = song
-            let fname = song.fileURL.lastPathComponent.lowercased()
-            if byFileName[fname] == nil {
-                byFileName[fname] = song
-            }
-        }
-
-        var matchedSongs: [Song] = []
-        var seenIDs = Set<String>()
-
-        for entry in entries {
-            let normalized = entry.replacingOccurrences(of: "\\", with: "/")
-            let fileNameOnly = URL(fileURLWithPath: normalized).lastPathComponent.lowercased()
-            let lowerFull = normalized.lowercased()
-
-            let found = byRelativePath[lowerFull]
-                ?? library.first(where: { lowerFull.hasSuffix($0.relativePath.lowercased()) })
-                ?? byFileName[fileNameOnly]
-
-            if let song = found, seenIDs.insert(song.relativePath).inserted {
-                matchedSongs.append(song)
-            }
-        }
-
+        let matchedSongs = M3U8Parser.parseAndResolve(url: url, library: library)
         let playlistName = url.deletingPathExtension().lastPathComponent
         if !matchedSongs.isEmpty {
             createOrAppendPlaylist(name: playlistName, songs: matchedSongs)
