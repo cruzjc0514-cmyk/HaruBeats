@@ -83,7 +83,7 @@ struct LibraryView: View {
             }
             .fileImporter(
                 isPresented: $showFileImporter,
-                allowedContentTypes: [.audio],
+                allowedContentTypes: [.audio, .plainText, .data],
                 allowsMultipleSelection: true
             ) { result in
                 if case .success(let urls) = result {
@@ -131,8 +131,8 @@ struct LibraryView: View {
                 ForEach(filteredSongs) { song in
                     LibrarySongRow(
                         song: song,
-                        isCurrent: audioManager.currentSong?.fileURL == song.fileURL,
-                        hasLyrics: audioManager.hasLyrics(for: song),
+                        isCurrent: audioManager.currentSong?.relativePath == song.relativePath,
+                        hasLyrics: audioManager.songsWithLyrics.contains(song.relativePath),
                         accentColor: effectiveAccent,
                         onTap: {
                             audioManager.play(song: song, inQueue: filteredSongs)
@@ -210,7 +210,7 @@ private struct ArtistDetailView: View {
     var body: some View {
         List {
             ForEach(songs) { song in
-                let isCurrent = audioManager.currentSong?.fileURL == song.fileURL
+                let isCurrent = audioManager.currentSong?.relativePath == song.relativePath
                 HStack(spacing: 12) {
                     Group {
                         if let img = song.thumbnailImage {

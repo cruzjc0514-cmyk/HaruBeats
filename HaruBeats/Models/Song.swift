@@ -15,18 +15,18 @@ struct Song: Identifiable, Hashable {
     let embeddedLyrics: String?
     let duration: TimeInterval
     let fileURL: URL
+    let relativePath: String
     let artworkCacheKey: String?
     let codec: String
     let sampleRate: Double
     let bitDepth: Int?
     let replayGainDB: Double?
+    let replayGainPeak: Double?
 
-    /// Miniatura rápida en caché para listas y cuadrículas
     var thumbnailImage: UIImage? {
         LibraryCacheManager.shared.thumbnailImage(forKey: artworkCacheKey)
     }
 
-    /// Portada completa en caché para el reproductor ampliado y pantalla bloqueada
     var artworkImage: UIImage? {
         LibraryCacheManager.shared.fullImage(forKey: artworkCacheKey)
     }
@@ -51,9 +51,22 @@ struct Song: Identifiable, Hashable {
         (bitDepth ?? 16) >= 24 || sampleRate > 48000
     }
 
+    /// Ganancia segura en dB limitada por REPLAYGAIN_*_PEAK (-20 * log10(peak)) para evitar clipping
+    var safeReplayGainDB: Float {
+        guard let rawDB = replayGainDB else { return 0 }
+        var effectiveDB = rawDB
+        if let peak = replayGainPeak, peak > 0 {
+            let maxGainBeforeClipDB = -20.0 * log10(peak)
+            if effectiveDB > maxGainBeforeClipDB {
+                effectiveDB = maxGainBeforeClipDB
+            }
+        }
+        return Float(min(max(effectiveDB, -15.0), 12.0))
+    }
+
     func toCachedRecord(fileSize: Int64, modTime: TimeInterval) -> CachedSongRecord {
         CachedSongRecord(
-            fileName: fileURL.lastPathComponent,
+            relativePath: relativePath,
             fileSize: fileSize,
             modificationTimestamp: modTime,
             title: title,
@@ -70,6 +83,7 @@ struct Song: Identifiable, Hashable {
             sampleRate: sampleRate,
             bitDepth: bitDepth,
             replayGainDB: replayGainDB,
+            replayGainPeak: replayGainPeak,
             artworkCacheKey: artworkCacheKey
         )
     }
@@ -88,15 +102,17 @@ struct Song: Identifiable, Hashable {
             embeddedLyrics: record.embeddedLyrics,
             duration: record.duration,
             fileURL: fileURL,
+            relativePath: record.relativePath,
             artworkCacheKey: record.artworkCacheKey,
             codec: record.codec,
             sampleRate: record.sampleRate,
             bitDepth: record.bitDepth,
-            replayGainDB: record.replayGainDB
+            replayGainDB: record.replayGainDB,
+            replayGainPeak: record.replayGainPeak
         )
     }
 
-    static func from(url: URL) async -> Song {
+    static func from(url: URL, relativePath: String) async -> Song {
         let fallbackTitle = url.deletingPathExtension().lastPathComponent
         let ext = url.pathExtension.uppercased()
         let codecName = ext.isEmpty ? "AUDIO" : ext
@@ -115,6 +131,7 @@ struct Song: Identifiable, Hashable {
         var sampleRate: Double = 44100
         var bitDepth: Int? = nil
         var replayGainDB: Double? = nil
+        var replayGainPeak: Double? = nil
 
         if let audioFile = try? AVAudioFile(forReading: url) {
             let fmt = audioFile.fileFormat
@@ -142,6 +159,7 @@ struct Song: Identifiable, Hashable {
             if let sr = flacMeta.sampleRate, sr > 0 { sampleRate = sr }
             if let bd = flacMeta.bitDepth { bitDepth = bd }
             replayGainDB = flacMeta.replayGainTrackDB ?? flacMeta.replayGainAlbumDB
+            replayGainPeak = flacMeta.replayGainTrackPeak ?? flacMeta.replayGainAlbumPeak
         } else {
             let asset = AVURLAsset(url: url)
             if durationSeconds == 0, let assetDuration = try? await asset.load(.duration) {
@@ -179,9 +197,9 @@ struct Song: Identifiable, Hashable {
         let resolvedAlbumArtist = (albumArtist?.isEmpty == false) ? albumArtist! : artist
         var cacheKey: String? = nil
         if let artworkData {
-            let safeAlbumKey = "\(resolvedAlbumArtist)_\(album)_\(url.lastPathComponent)"
+            let safeAlbumKey = relativePath
                 .replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "_", options: .regularExpression)
-            cacheKey = String(safeAlbumKey.prefix(80))
+            cacheKey = String(safeAlbumKey.prefix(90))
             LibraryCacheManager.shared.storeArtwork(data: artworkData, forKey: cacheKey!)
         }
 
@@ -198,11 +216,13 @@ struct Song: Identifiable, Hashable {
             embeddedLyrics: embeddedLyrics,
             duration: durationSeconds,
             fileURL: url,
+            relativePath: relativePath,
             artworkCacheKey: cacheKey,
             codec: codecName,
             sampleRate: sampleRate,
             bitDepth: bitDepth,
-            replayGainDB: replayGainDB
+            replayGainDB: replayGainDB,
+            replayGainPeak: replayGainPeak
         )
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 import UIKit
 
 struct CachedSongRecord: Codable {
-    let fileName: String
+    let relativePath: String
     let fileSize: Int64
     let modificationTimestamp: TimeInterval
     let title: String
@@ -19,6 +19,7 @@ struct CachedSongRecord: Codable {
     let sampleRate: Double
     let bitDepth: Int?
     let replayGainDB: Double?
+    let replayGainPeak: Double?
     let artworkCacheKey: String?
 }
 
@@ -41,7 +42,7 @@ final class LibraryCacheManager {
     }
 
     private var indexFileURL: URL {
-        cachesDirectory.appendingPathComponent("harubeats_library_index.json")
+        cachesDirectory.appendingPathComponent("harubeats_library_index_v3.json")
     }
 
     private init() {
@@ -57,7 +58,7 @@ final class LibraryCacheManager {
         }
         var dict: [String: CachedSongRecord] = [:]
         for record in records {
-            dict[record.fileName] = record
+            dict[record.relativePath] = record
         }
         return dict
     }

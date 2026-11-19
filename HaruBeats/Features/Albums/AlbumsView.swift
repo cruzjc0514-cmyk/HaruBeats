@@ -177,7 +177,7 @@ struct AlbumDetailView: View {
 
             Section {
                 ForEach(album.songs) { song in
-                    let isCurrent = audioManager.currentSong?.fileURL == song.fileURL
+                    let isCurrent = audioManager.currentSong?.relativePath == song.relativePath
                     HStack(spacing: 12) {
                         Text(song.trackNumber > 0 ? "\(song.trackNumber)" : "•")
                             .font(.caption.monospacedDigit().weight(.semibold))
@@ -197,7 +197,7 @@ struct AlbumDetailView: View {
 
                         Spacer()
 
-                        if audioManager.hasLyrics(for: song) {
+                        if audioManager.songsWithLyrics.contains(song.relativePath) {
                             Image(systemName: "quote.bubble")
                                 .font(.caption2)
                                 .foregroundStyle(AppTheme.secondaryText)

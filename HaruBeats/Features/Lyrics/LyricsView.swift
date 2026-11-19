@@ -14,20 +14,14 @@ struct LyricsView: View {
         return (AccentOption(rawValue: accentRaw) ?? .indigo).color
     }
 
-    private var activeLineID: UUID? {
-        let adjustedTime = audioManager.currentTime + audioManager.lyricsOffset
-        for line in audioManager.currentLyrics.reversed() {
-            if line.timestamp <= adjustedTime {
-                return line.id
-            }
-        }
-        return nil
-    }
-
     var body: some View {
         Group {
             if !audioManager.currentLyrics.isEmpty {
-                syncedLyricsView
+                SyncedLyricsContainer(
+                    progress: audioManager.progress,
+                    audioManager: audioManager,
+                    effectiveAccent: effectiveAccent
+                )
             } else if let plainText = audioManager.plainLyricsText, !plainText.isEmpty {
                 plainLyricsView(text: plainText)
             } else {
@@ -122,8 +116,20 @@ struct LyricsView: View {
             }
         }
     }
+}
 
-    private var syncedLyricsView: some View {
+private struct SyncedLyricsContainer: View {
+    @ObservedObject var progress: PlaybackProgress
+    @ObservedObject var audioManager: AudioPlayerManager
+    let effectiveAccent: Color
+
+    var body: some View {
+        let currentIdx = progress.activeLineIndex
+        let activeLineID: UUID? = {
+            guard let idx = currentIdx, idx >= 0, idx < audioManager.currentLyrics.count else { return nil }
+            return audioManager.currentLyrics[idx].id
+        }()
+
         VStack(spacing: 8) {
             syncControlBar
 
@@ -132,10 +138,10 @@ struct LyricsView: View {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         Spacer().frame(height: 16)
 
-                        ForEach(audioManager.currentLyrics) { line in
+                        ForEach(Array(audioManager.currentLyrics.enumerated()), id: \.element.id) { index, line in
                             LyricRowView(
                                 line: line,
-                                isActive: line.id == activeLineID,
+                                isActive: index == currentIdx,
                                 fontScale: audioManager.lyricsFontScale
                             ) {
                                 let target = max(line.timestamp - audioManager.lyricsOffset, 0)
