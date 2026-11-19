@@ -187,8 +187,8 @@ struct SettingsView: View {
         }
     }
 
-    private func handleFolderImport(_ result: Result<URL, Error>) {
-        guard case .success(let folderURL) = result else { return }
+    private func handleFolderImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let folderURL = urls.first else { return }
         Task {
             let imported = await audioManager.importFolder(url: folderURL)
             if !imported.importedSongs.isEmpty {
@@ -203,8 +203,8 @@ struct SettingsView: View {
         }
     }
 
-    private func handleM3U8Import(_ result: Result<URL, Error>) {
-        guard case .success(let url) = result else { return }
+    private func handleM3U8Import(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
         let count = playlistManager.importM3U8(from: url, library: audioManager.library)
         statusMessage = "Playlist importada con \(count) canciones encontradas."
     }
