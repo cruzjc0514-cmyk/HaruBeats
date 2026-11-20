@@ -771,6 +771,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     func enqueueNext(_ song: Song) {
+        guard song.relativePath != currentSong?.relativePath else { return }
         if playbackQueue.isEmpty {
             playbackQueue = library
         }
@@ -781,6 +782,18 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             playbackQueue.insert(song, at: 0)
         }
         clearGaplessPreSchedule()
+        savePlaybackSession(force: true)
+    }
+
+    func appendToQueue(_ song: Song) {
+        guard song.relativePath != currentSong?.relativePath else { return }
+        if playbackQueue.isEmpty {
+            playbackQueue = library
+        }
+        playbackQueue.removeAll { $0.relativePath == song.relativePath }
+        playbackQueue.append(song)
+        clearGaplessPreSchedule()
+        savePlaybackSession(force: true)
     }
 
     func moveInQueue(from source: IndexSet, to destination: Int) {
